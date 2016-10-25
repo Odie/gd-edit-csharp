@@ -161,6 +161,15 @@ namespace GDSaveEditor
             return Read_Byte(s, encrypter) == 1;
         }
 
+        //private int Read_Int32()
+        //{
+        //    byte[] numArray = new byte[4];
+        //    this.msStream.Read(numArray, 0, 4);
+        //    int num = checked((int)((long)BitConverter.ToInt32(numArray, 0) ^ (long)this.checksum));
+        //    this.Hash(numArray, 4U);
+        //    return num;
+        //}
+
         // Read a 4 byte value
         // Note that we cannot use the "Read_bytes" function because they make use of the encrypter state differently.
         // This function uses the entire 4 bytes of the encrypter state to decrypt the value.
@@ -262,6 +271,24 @@ namespace GDSaveEditor
             public bool hardcoreMode;
         }
 
+        class Block1
+        {
+            public UInt32 version;
+            public Boolean inMainQuest;
+            public Boolean hasBeenInGame;
+            public Byte lastDifficulty;
+            public Byte greatestDifficultyCompleted;
+            public UInt32 ironMode;
+            public Byte greatestSurvivalDifficultyCompleted;
+            public UInt32 tributes;
+            public Byte UICompassState;
+            public UInt32 alwaysShowLootMode;
+            public Boolean showSkillHelp;
+            public Boolean altWeaponSet;
+            public Boolean altWeaponSetEnabled;
+            public string playerTexture;
+        }
+
         static Object readStructure(System.Type type, Stream s, Encrypter encrypter) {
             // Create an instance of the object to be filled with data
             Object instance = Activator.CreateInstance(type);
@@ -302,10 +329,38 @@ namespace GDSaveEditor
                 {
                     field.SetValue(instance, Read_UInt32(s, encrypter));
                 }
+                else if (field.FieldType == typeof(byte))
+                {
+                    field.SetValue(instance, Read_Byte(s, encrypter));
+                }
+                else
+                    throw new Exception("I don't know how to handle this type of field!");
 
             }
 
             return instance;
+        }
+
+        // Reads a single block from the character file
+        static Object readBlock(uint expectedBlockID, Type blockType, Stream s, Encrypter encrypter)
+        {
+            // Read out the block begin marker
+            // This should indicate the type of the block to be read
+            uint readBlockID = Read_UInt32(s, encrypter);
+            if (readBlockID != expectedBlockID)
+                throw new Exception(String.Format("Expected block {0} but got {1}!", expectedBlockID, readBlockID));
+
+            // Read the length and the contents of the block
+            BinaryReader reader = new BinaryReader(s);
+            uint blockLength = reader.ReadUInt32() ^ encrypter.state;
+            object blockInstance = readStructure(blockType, s, encrypter);
+
+            // Read the block end marker
+            uint endMarker = reader.ReadUInt32();
+            if (endMarker != encrypter.state)
+                throw new Exception(String.Format("Wrong checksum at the end of block {0}!", expectedBlockID));
+
+            return blockInstance;
         }
 
 
@@ -336,8 +391,20 @@ namespace GDSaveEditor
 
             Header header = (Header)readStructure(typeof(Header), fs, enc);
 
+            uint checksum = reader.ReadUInt32();
+            if(checksum != enc.state)
+                throw new Exception("Checksum mismatch!");
+
+            uint dataVersion = Read_UInt32(fs, enc);
+            if(dataVersion != 6 && dataVersion != 7)
+                throw new Exception(String.Format("Incorrect data version!  Unknown version {0}.", dataVersion));
+
+            byte[] mysteryField = Read_Bytes(fs, enc, 16);
+
+            Block1 block1 = (Block1)readBlock(1, typeof(Block1), fs, enc);
             return;
         }
+
 
         // Get back a list of grim dawn save directories that appears to have a player.gdc file
         static List<string> findSaveFileDirs()
