@@ -487,6 +487,19 @@ namespace GDSaveEditor
             public List<UID> currentRespawn = new List<UID>();
         }
 
+        class Teleporters
+        {
+            public List<UID> spawnPointIDs = new List<UID>();
+        }
+
+        class Block6
+        {
+            public UInt32 version;
+
+            [StaticCount(3)]
+            public List<Teleporters> spawnPoints = new List<Teleporters>();
+        }
+
         // Builds a flattened "ordered" list of field names given a type.
         //
         // For some reason, when you ask for a list of fields for a class, the fields come in "reverse hiearchy order".
@@ -715,6 +728,7 @@ namespace GDSaveEditor
             Block3 block3 = ReadBlock3(fs, enc);
             Block4 block4 = (Block4)readBlock(4, typeof(Block4), fs, enc);
             Block5 block5 = (Block5)readBlock(5, typeof(Block5), fs, enc);
+            Block6 block6 = (Block6)readBlock(6, typeof(Block6), fs, enc);
             return;
         }
 
