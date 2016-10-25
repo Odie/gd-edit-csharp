@@ -17,6 +17,15 @@ namespace GDSaveEditor
         }
     }
 
+    public class StaticCount : System.Attribute
+    {
+        public readonly int count;
+        public StaticCount(int count)
+        {
+            this.count = count;
+        }
+    }
+
     public static class Extensions
     {
         public static void Each<T>(this IEnumerable<T> ie, Action<T, int> action)
@@ -402,6 +411,11 @@ namespace GDSaveEditor
             public List<StashItem> stashItems = new List<StashItem>();
         }
 
+        public class UID
+        {
+            public byte[] data = new byte[16];
+        }
+
         private static Block3 ReadBlock3(Stream s, Encrypter encrypter)
         {
             // Check the ID of the block
@@ -457,6 +471,22 @@ namespace GDSaveEditor
             return data;
         }
 
+        class SpawnPoints
+        {
+            public List<UID> spawnPointIDs = new List<UID>();
+        }
+
+        class Block5
+        {
+            public UInt32 version;
+
+            [StaticCount(3)]
+            public List<SpawnPoints> spawnPoints = new List<SpawnPoints>();
+
+            [StaticCount(3)]
+            public List<UID> currentRespawn = new List<UID>();
+        }
+
         // Builds a flattened "ordered" list of field names given a type.
         //
         // For some reason, when you ask for a list of fields for a class, the fields come in "reverse hiearchy order".
@@ -494,6 +524,7 @@ namespace GDSaveEditor
         static Object readStructure(Type type, Stream s, Encrypter encrypter) {
             // Create an instance of the object to be filled with data
             Object instance = Activator.CreateInstance(type);
+            Console.WriteLine("Serializing {0}", type);
 
             var fieldInfos = buildOrderedFieldList(type);
             foreach (var field in fieldInfos)
@@ -539,13 +570,31 @@ namespace GDSaveEditor
                 {
                     field.SetValue(instance, Read_Float(s, encrypter));
                 }
+                else if (field.FieldType == typeof(byte[]))
+                {
+                    // Looks like we're expecting a byte array
+                    byte[] array = (byte[])field.GetValue(instance);
+
+                    // Read in the exact size we're expecting
+                    array = Read_Bytes(s, encrypter, array.Length);
+
+                    // Place the newly read data back into the field location
+                    field.SetValue(instance, array);
+                }
                 else if (field.FieldType.IsGenericType && field.FieldType.GetGenericTypeDefinition() == typeof(List<>))
                 {
                     // What kind of items do we want to read?
                     Type itemType = field.FieldType.GetGenericArguments()[0];
 
                     // How many of them are there?
-                    UInt32 itemCount = Read_UInt32(s, encrypter);
+                    int itemCount = 0;
+                    StaticCount count = (StaticCount)field.GetCustomAttribute(typeof(StaticCount));
+                    if (count != null)
+                        itemCount = count.count;
+                    else
+                        itemCount = (int)Read_UInt32(s, encrypter);
+
+                    Console.WriteLine("Substructure: {0}, count = {1}", itemType, itemCount);
 
                     // Where are we storing the items?
                     dynamic list = field.GetValue(instance);
@@ -665,6 +714,7 @@ namespace GDSaveEditor
             Block2 block2 = (Block2)readBlock(2, typeof(Block2), fs, enc);
             Block3 block3 = ReadBlock3(fs, enc);
             Block4 block4 = (Block4)readBlock(4, typeof(Block4), fs, enc);
+            Block5 block5 = (Block5)readBlock(5, typeof(Block5), fs, enc);
             return;
         }
 
