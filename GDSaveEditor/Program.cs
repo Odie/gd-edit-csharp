@@ -382,7 +382,23 @@ namespace GDSaveEditor
 
             return sack;
         }
-        private static void ReadBlock3(Stream s, Encrypter encrypter)
+
+        class Block3
+        {
+            public UInt32 version;
+            public UInt32 sackCount;
+            public UInt32 focusedSack;
+            public UInt32 selectedSack;
+            public List<InventorySack> inventorySacks = new List<InventorySack>();
+            public Boolean useAltWeaponSet;
+            public List<EquipmentItem> equipment = new List<EquipmentItem>();
+            public Boolean alternate1;
+            public List<EquipmentItem> alternateSet1 = new List<EquipmentItem>();
+            public Boolean alternate2;
+            public List<EquipmentItem> alternateSet2 = new List<EquipmentItem>();
+        }
+
+        private static Block3 ReadBlock3(Stream s, Encrypter encrypter)
         {
             // Check the ID of the block
             uint expectedBlockID = 3;
@@ -393,42 +409,44 @@ namespace GDSaveEditor
             // Read the length of the block
             BinaryReader reader = new BinaryReader(s);
             uint blockLength = reader.ReadUInt32() ^ encrypter.state;
-            
-            uint version = Read_UInt32(s, encrypter);
-            if(version != 4)
-                throw new Exception(String.Format("Inventory block version mismatch!  Unknown version {0}.", version));
+
+            Block3 data = new Block3();
+
+            data.version = Read_UInt32(s, encrypter);
+            if(data.version != 4)
+                throw new Exception(String.Format("Inventory block version mismatch!  Unknown version {0}.", data.version));
 
             bool hasData = Read_Bool(s, encrypter);
             if(hasData)
             {
-                UInt32 sackCount = Read_UInt32(s, encrypter);
-                UInt32 focusedSack = Read_UInt32(s, encrypter);
-                UInt32 selectedSack = Read_UInt32(s, encrypter);
+                data.sackCount = Read_UInt32(s, encrypter);
+                data.focusedSack = Read_UInt32(s, encrypter);
+                data.selectedSack = Read_UInt32(s, encrypter);
 
-                var inventorySacks = new List<InventorySack>();
-                for (int i = 0; i < sackCount; i++)
-                    inventorySacks.Add(ReadSack(s, encrypter));
+                // Read all sacks
+                for (int i = 0; i < data.sackCount; i++)
+                    data.inventorySacks.Add(ReadSack(s, encrypter));
 
-                Boolean useAltWeaponSet = Read_Bool(s, encrypter);
+                data.useAltWeaponSet = Read_Bool(s, encrypter);
 
-                var equipment = new List<EquipmentItem>();
+                // Read equipment
                 for (int i = 0; i < 12; i++)
                 {
-                    equipment.Add((EquipmentItem)readStructure(typeof(EquipmentItem), s, encrypter));
+                    data.equipment.Add((EquipmentItem)readStructure(typeof(EquipmentItem), s, encrypter));
                 }
   
-                Boolean alternate1 = Read_Bool(s, encrypter);
-                var alternateSet1 = new List<EquipmentItem>();
+                // Read alternate set 1
+                data.alternate1 = Read_Bool(s, encrypter);
                 for (int i = 0; i < 2; i++)
                 {
-                    alternateSet1.Add((EquipmentItem)readStructure(typeof(EquipmentItem), s, encrypter));
+                    data.alternateSet1.Add((EquipmentItem)readStructure(typeof(EquipmentItem), s, encrypter));
                 }
 
-                Boolean alternate2 = Read_Bool(s, encrypter);
-                var alternateSet2 = new List<EquipmentItem>();
+                // Read alternate set 2
+                data.alternate2 = Read_Bool(s, encrypter);
                 for (int i = 0; i < 2; i++)
                 {
-                    alternateSet2.Add((EquipmentItem)readStructure(typeof(EquipmentItem), s, encrypter));
+                    data.alternateSet2.Add((EquipmentItem)readStructure(typeof(EquipmentItem), s, encrypter));
                 }
             }
 
@@ -436,6 +454,8 @@ namespace GDSaveEditor
             uint endMarker = reader.ReadUInt32();
             if (endMarker != encrypter.state)
                 throw new Exception(String.Format("Wrong checksum at the end of block {0}!", expectedBlockID));
+
+            return data;
         }
 
         // Builds a flattened "ordered" list of field names given a type.
@@ -592,7 +612,7 @@ namespace GDSaveEditor
 
             Block1 block1 = (Block1)readBlock(1, typeof(Block1), fs, enc);
             Block2 block2 = (Block2)readBlock(2, typeof(Block2), fs, enc);
-            ReadBlock3(fs, enc);
+            Block3 block3 = ReadBlock3(fs, enc);
             return;
         }
 
