@@ -170,9 +170,8 @@ namespace GDSaveEditor
 
             public static uint[] generateTable(uint seed)
             {
-                uint[] table = new uint[byte.MaxValue]; // 256 entry table
-                uint num1 = seed;
-                uint idx = 0;
+                uint[] table = new uint[byte.MaxValue+1]; // 256 entry table
+                uint val = seed;
                 checked
                 {
                     // Construct a table of 256 value for decrytpion and encryption.
@@ -184,15 +183,16 @@ namespace GDSaveEditor
                     // we'll get junk data out. 
                     for (uint i = 0; i <= byte.MaxValue; i++)
                     {
-                        num1 = BitConverter.ToUInt32(
+                        val = BitConverter.ToUInt32(
                                 BitConverter.GetBytes(
-                                    Convert.ToInt64(num1 << 31 | num1 >> 1) *
+                                    Convert.ToInt64(val << 31 | val >> 1) *
                                     Convert.ToInt64(39916801))
                                 , 0);
 
-                        table[idx] = num1;
+                        table[i] = val;
                     }
                 }
+
                 return table;
             }
         }
@@ -210,6 +210,7 @@ namespace GDSaveEditor
             // File Format notes:
             //  Encryption seed - 4 bytes
             //  Magic number - 4 bytes ("GDCX")
+            //  Header version - 4 bytes (must be 1)
 
             // Read and seed the encrytpion table
             Encrypter enc = new Encrypter(reader.ReadUInt32() ^ 1431655765U);
@@ -217,6 +218,10 @@ namespace GDSaveEditor
             // Try to read the file marker ("GDCX")
             if(Read_UInt32(fs, enc) != 0x58434447)
                 throw new Exception("Incorrect magic ID read!");
+
+            uint headerVersion = Read_UInt32(fs, enc);
+            if(headerVersion != 1)
+                throw new Exception(String.Format("Incorrect header version!  Unknown version {0}", headerVersion));
 
         }
 
