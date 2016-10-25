@@ -559,6 +559,12 @@ namespace GDSaveEditor
             public List<Shrines> shrines = new List<Shrines>();
         }
 
+        class Block12
+        {
+            public UInt32 version;
+            public List<string> loreItemNames = new List<string>();
+        }
+
         // Builds a flattened "ordered" list of field names given a type.
         //
         // For some reason, when you ask for a list of fields for a class, the fields come in "reverse hiearchy order".
@@ -591,6 +597,46 @@ namespace GDSaveEditor
                 orderedFieldList.AddRange(wantedFields);
             }
             return orderedFieldList;
+        }
+
+        static bool isBasicType(Type type)
+        {
+            HashSet<Type> set = new HashSet<Type>() {
+                typeof(string),
+                typeof(bool),
+                typeof(uint),
+                typeof(byte),
+                typeof(float),
+            };
+
+            if (set.Contains(type))
+                return true;
+            else
+                return false;
+        }
+
+        // Given a "basic type", read and return such an object
+        //
+        // This is useful in the readStructure function where it tries to deal with
+        // types in a more general way. Since we're not attaching these read functions
+        // to the types/classes themselves, we cannot just directly invoke something.
+        // We need a separate way to dispatch these call.
+        //
+        // It's not pretty, but it'll work for now.
+        static object Read_Basic_Type(Type type, Stream s, Encrypter encrypter)
+        {
+            if (type == typeof(string))
+                return Read_String(s, encrypter);
+            else if (type == typeof(bool))
+                return Read_Bool(s, encrypter);
+            else if (type == typeof(uint))
+                return Read_UInt32(s, encrypter);
+            else if (type == typeof(byte))
+                return Read_Byte(s, encrypter);
+            else if (type == typeof(float))
+                return Read_Float(s, encrypter);
+
+            return null;
         }
 
         static Object readStructure(Type type, Stream s, Encrypter encrypter) {
@@ -671,11 +717,19 @@ namespace GDSaveEditor
                     // Where are we storing the items?
                     dynamic list = field.GetValue(instance);
 
+                    // How will we read the item?
+                    // We read in basic types differently than "complex" or "compound" types
+                    bool basicType = isBasicType(itemType);
+
                     // Start reading
                     for(int i = 0; i < itemCount; i++)
                     {
                         // Read in a single item
-                        dynamic item = readStructure(itemType, s, encrypter);
+                        dynamic item;
+                        if (basicType)
+                            item = Read_Basic_Type(itemType, s, encrypter);
+                        else
+                            item = readStructure(itemType, s, encrypter);
                         list.Add(item);
                     }
                 }
@@ -791,6 +845,7 @@ namespace GDSaveEditor
             Block7 block7 = (Block7)readBlock(7, typeof(Block7), fs, enc);
             Block17 block17 = (Block17)readBlock(17, typeof(Block17), fs, enc);
             Block8 block8 = (Block8)readBlock(8, typeof(Block8), fs, enc);
+            Block12 block12 = (Block12)readBlock(12, typeof(Block12), fs, enc);
             return;
         }
 
