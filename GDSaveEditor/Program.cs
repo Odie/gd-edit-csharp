@@ -513,6 +513,52 @@ namespace GDSaveEditor
             public List<Markers> markers = new List<Markers>();
         }
 
+        public class CharacterSkill
+        {
+            public string SkillName;
+            public UInt32 Level;
+            public Boolean Enabled;
+            public UInt32 DevotionLevel;
+            public UInt32 DevotionExperience;
+            public UInt32 SubLevel;
+            public Boolean SkillActive;
+            public Boolean SkillTransition;
+            public string AutoCastSkillName;
+            public string AutoCastControllerName;
+        }
+
+        private class ItemSkill
+        {
+            public string SkillName;
+            public string AutoCastSkillName;
+            public string AutoCastControllerName;
+            public byte[] UnknownBytes = new byte[4];
+            public string Unknown;
+        }
+
+        class Block8
+        {
+            public UInt32 version;
+            public List<CharacterSkill> skills = new List<CharacterSkill>();
+            public UInt32 masteriesAllowed;
+            public UInt32 skillPointsReclaimed;
+            public UInt32 devotionPointsReclaimed;
+            public List<ItemSkill> itemSkills = new List<ItemSkill>();
+        }
+
+        class Shrines
+        {
+            public List<UID> shrineIDs = new List<UID>();
+        }
+
+        class Block17
+        {
+            public UInt32 version;
+
+            [StaticCount(6)]
+            public List<Shrines> shrines = new List<Shrines>();
+        }
+
         // Builds a flattened "ordered" list of field names given a type.
         //
         // For some reason, when you ask for a list of fields for a class, the fields come in "reverse hiearchy order".
@@ -743,6 +789,8 @@ namespace GDSaveEditor
             Block5 block5 = (Block5)readBlock(5, typeof(Block5), fs, enc);
             Block6 block6 = (Block6)readBlock(6, typeof(Block6), fs, enc);
             Block7 block7 = (Block7)readBlock(7, typeof(Block7), fs, enc);
+            Block17 block17 = (Block17)readBlock(17, typeof(Block17), fs, enc);
+            Block8 block8 = (Block8)readBlock(8, typeof(Block8), fs, enc);
             return;
         }
 
