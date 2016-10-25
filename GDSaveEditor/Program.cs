@@ -357,11 +357,8 @@ namespace GDSaveEditor
         private static InventorySack ReadSack(Stream s, Encrypter encrypter)
         {
             // Check the ID of the block
-            uint expectedBlockID = 0;
-            uint readBlockID = Read_UInt32(s, encrypter);
-            if (readBlockID != expectedBlockID)
-                throw new Exception(String.Format("Expected block {0} but got {1}!", expectedBlockID, readBlockID));
-
+            readVerifyBlockStartMarker(0, s, encrypter);
+            
             // Read the length of the block
             BinaryReader reader = new BinaryReader(s);
             uint blockLength = reader.ReadUInt32() ^ encrypter.state;
@@ -376,10 +373,8 @@ namespace GDSaveEditor
                 sack.items.Add((InventoryItem)readStructure(typeof(InventoryItem), s, encrypter));
 
             // Read the block end marker
-            uint endMarker = reader.ReadUInt32();
-            if (endMarker != encrypter.state)
-                throw new Exception(String.Format("Wrong checksum at the end of block {0}!", expectedBlockID));
-
+            readVerifyBlockEndMarker(0, s, encrypter);
+            
             return sack;
         }
 
@@ -410,11 +405,8 @@ namespace GDSaveEditor
         private static Block3 ReadBlock3(Stream s, Encrypter encrypter)
         {
             // Check the ID of the block
-            uint expectedBlockID = 3;
-            uint readBlockID = Read_UInt32(s, encrypter);
-            if (readBlockID != expectedBlockID)
-                throw new Exception(String.Format("Expected block {0} but got {1}!", expectedBlockID, readBlockID));
-
+            readVerifyBlockStartMarker(3, s, encrypter);
+            
             // Read the length of the block
             BinaryReader reader = new BinaryReader(s);
             uint blockLength = reader.ReadUInt32() ^ encrypter.state;
@@ -460,9 +452,7 @@ namespace GDSaveEditor
             }
 
             // Read the block end marker
-            uint endMarker = reader.ReadUInt32();
-            if (endMarker != encrypter.state)
-                throw new Exception(String.Format("Wrong checksum at the end of block {0}!", expectedBlockID));
+            readVerifyBlockEndMarker(3, s, encrypter);
 
             return data;
         }
@@ -576,8 +566,10 @@ namespace GDSaveEditor
             return instance;
         }
 
-        // Reads a single block from the character file
-        static Object readBlock(uint expectedBlockID, Type blockType, Stream s, Encrypter encrypter)
+        //**************************************************************************************
+        // Block Reading utilities
+        //
+        static bool readVerifyBlockStartMarker(uint expectedBlockID, Stream s, Encrypter encrypter)
         {
             // Read out the block begin marker
             // This should indicate the type of the block to be read
@@ -585,6 +577,37 @@ namespace GDSaveEditor
             if (readBlockID != expectedBlockID)
                 throw new Exception(String.Format("Expected block {0} but got {1}!", expectedBlockID, readBlockID));
 
+            return true;
+        }
+
+        // Read the length of the block
+        // For some reason, the file format is such that reading this field requires *not* updating the encrypter state
+        static uint readBlockLength(Stream s, Encrypter encrypter)
+        {
+            // Read the length of the block
+            BinaryReader reader = new BinaryReader(s);
+            return reader.ReadUInt32() ^ encrypter.state;
+        }
+
+        static bool readVerifyBlockEndMarker(uint expectedBlockID, Stream s, Encrypter encrypter)
+        {
+            // Read the block end marker
+            BinaryReader reader = new BinaryReader(s);
+            uint endMarker = reader.ReadUInt32();
+            if (endMarker != encrypter.state)
+                throw new Exception(String.Format("Wrong checksum at the end of block {0}!", expectedBlockID));
+
+            return true;
+        }
+
+        // Reads a single block from the character file
+        static Object readBlock(uint expectedBlockID, Type blockType, Stream s, Encrypter encrypter)
+        {
+            // Stream sync check
+            // Verify that we're reading the beginning of a block
+            // Will succeed or throw error
+            readVerifyBlockStartMarker(expectedBlockID, s, encrypter);
+            
             // Read the length of the block
             BinaryReader reader = new BinaryReader(s);
             uint blockLength = reader.ReadUInt32() ^ encrypter.state;
@@ -592,11 +615,11 @@ namespace GDSaveEditor
             // Read the content of the block
             object blockInstance = readStructure(blockType, s, encrypter);
 
-            // Read the block end marker
-            uint endMarker = reader.ReadUInt32();
-            if (endMarker != encrypter.state)
-                throw new Exception(String.Format("Wrong checksum at the end of block {0}!", expectedBlockID));
-
+            // Stream sync check
+            // Verify that we're reading the end of a block
+            // Will succeed or throw error
+            readVerifyBlockEndMarker(expectedBlockID, s, encrypter);
+            
             return blockInstance;
         }
 
