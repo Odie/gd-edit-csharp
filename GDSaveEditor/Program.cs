@@ -398,6 +398,15 @@ namespace GDSaveEditor
             public List<EquipmentItem> alternateSet2 = new List<EquipmentItem>();
         }
 
+        class Block4
+        {
+            public UInt32 version;
+            public UInt32 stashWidth;
+            public UInt32 stashHeight;
+            //public UInt32 numStashItems;
+            public List<StashItem> stashItems = new List<StashItem>();
+        }
+
         private static Block3 ReadBlock3(Stream s, Encrypter encrypter)
         {
             // Check the ID of the block
@@ -540,6 +549,25 @@ namespace GDSaveEditor
                 {
                     field.SetValue(instance, Read_Float(s, encrypter));
                 }
+                else if (field.FieldType.IsGenericType && field.FieldType.GetGenericTypeDefinition() == typeof(List<>))
+                {
+                    // What kind of items do we want to read?
+                    Type itemType = field.FieldType.GetGenericArguments()[0];
+
+                    // How many of them are there?
+                    UInt32 itemCount = Read_UInt32(s, encrypter);
+
+                    // Where are we storing the items?
+                    dynamic list = field.GetValue(instance);
+
+                    // Start reading
+                    for(int i = 0; i < itemCount; i++)
+                    {
+                        // Read in a single item
+                        dynamic item = readStructure(itemType, s, encrypter);
+                        list.Add(item);
+                    }
+                }
                 else 
                     throw new Exception("I don't know how to handle this type of field!");
 
@@ -613,6 +641,7 @@ namespace GDSaveEditor
             Block1 block1 = (Block1)readBlock(1, typeof(Block1), fs, enc);
             Block2 block2 = (Block2)readBlock(2, typeof(Block2), fs, enc);
             Block3 block3 = ReadBlock3(fs, enc);
+            Block4 block4 = (Block4)readBlock(4, typeof(Block4), fs, enc);
             return;
         }
 
