@@ -130,9 +130,9 @@ namespace GDSaveEditor
             // But since we're processing such small save files, we'll just abuse the GC a bit.
             byte[] data = new byte[1];
             s.Read(data, 0, 1);
-            uint val = (uint)data[0] ^ encrypter.state;
-            encrypter.updateState(data);
-            return BitConverter.GetBytes(val)[0];
+            byte val = (byte)(data[0] ^ (byte)encrypter.state);
+            encrypter.updateState(val);
+            return val;
         }
 
         private static bool Read_Bool(Stream s, Encrypter encrypter)
@@ -164,8 +164,13 @@ namespace GDSaveEditor
             {
                 for(int i = 0; i < data.Length; i++)
                 {
-                    state = state ^ encTable[data[i]];
+                    updateState(data[i]);
                 }
+            }
+
+            public void updateState(byte data)
+            {
+                state = state ^ encTable[data];
             }
 
             public static uint[] generateTable(uint seed)
