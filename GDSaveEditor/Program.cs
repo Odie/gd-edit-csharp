@@ -489,7 +489,7 @@ namespace GDSaveEditor
 
         class Teleporters
         {
-            public List<UID> spawnPointIDs = new List<UID>();
+            public List<UID> teleporterIDs = new List<UID>();
         }
 
         class Block6
@@ -498,6 +498,19 @@ namespace GDSaveEditor
 
             [StaticCount(3)]
             public List<Teleporters> spawnPoints = new List<Teleporters>();
+        }
+
+        class Markers
+        {
+            public List<UID> markerIDs = new List<UID>();
+        }
+
+        class Block7
+        {
+            public UInt32 version;
+
+            [StaticCount(3)]
+            public List<Markers> markers = new List<Markers>();
         }
 
         // Builds a flattened "ordered" list of field names given a type.
@@ -729,6 +742,7 @@ namespace GDSaveEditor
             Block4 block4 = (Block4)readBlock(4, typeof(Block4), fs, enc);
             Block5 block5 = (Block5)readBlock(5, typeof(Block5), fs, enc);
             Block6 block6 = (Block6)readBlock(6, typeof(Block6), fs, enc);
+            Block7 block7 = (Block7)readBlock(7, typeof(Block7), fs, enc);
             return;
         }
 
