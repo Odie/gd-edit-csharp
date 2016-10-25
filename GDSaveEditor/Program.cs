@@ -565,6 +565,22 @@ namespace GDSaveEditor
             public List<string> loreItemNames = new List<string>();
         }
 
+        private class Faction
+        {
+            public bool FactionChanged;
+            public bool FactionUnlocked;
+            public float FactionValue;
+            public float PositiveBoost;
+            public float NegativeBoost;
+        }
+
+        class Block13
+        {
+            public UInt32 version;
+            public UInt32 myFaction;
+            public List<Faction> factionValues = new List<Faction>();
+        }
+
         // Builds a flattened "ordered" list of field names given a type.
         //
         // For some reason, when you ask for a list of fields for a class, the fields come in "reverse hiearchy order".
@@ -846,6 +862,7 @@ namespace GDSaveEditor
             Block17 block17 = (Block17)readBlock(17, typeof(Block17), fs, enc);
             Block8 block8 = (Block8)readBlock(8, typeof(Block8), fs, enc);
             Block12 block12 = (Block12)readBlock(12, typeof(Block12), fs, enc);
+            Block13 block13 = (Block13)readBlock(13, typeof(Block13), fs, enc);
             return;
         }
 
