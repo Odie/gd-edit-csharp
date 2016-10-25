@@ -183,6 +183,11 @@ namespace GDSaveEditor
             return val;
         }
 
+        private static float Read_Float(Stream s, Encrypter encrypter)
+        {
+            return BitConverter.ToSingle(BitConverter.GetBytes(Read_UInt32(s, encrypter)), 0);
+        }
+
         private static string Read_String(Stream s, Encrypter encrypter)
         {
             uint length = Read_UInt32(s, encrypter);
@@ -289,6 +294,22 @@ namespace GDSaveEditor
             public string playerTexture;
         }
 
+        class Block2
+        {
+            public UInt32 version;
+            public UInt32 levelInBio;
+            public UInt32 experience;
+            public UInt32 modifierPoints;
+            public UInt32 skillPoints;
+            public UInt32 devotionPoints;
+            public UInt32 totalDevotionPointsUnlocked;
+            public float physique;
+            public float cunning;
+            public float spirit;
+            public float health;
+            public float energy;
+        }
+
         static Object readStructure(System.Type type, Stream s, Encrypter encrypter) {
             // Create an instance of the object to be filled with data
             Object instance = Activator.CreateInstance(type);
@@ -333,7 +354,11 @@ namespace GDSaveEditor
                 {
                     field.SetValue(instance, Read_Byte(s, encrypter));
                 }
-                else
+                else if (field.FieldType == typeof(float))
+                {
+                    field.SetValue(instance, Read_Float(s, encrypter));
+                }
+                else 
                     throw new Exception("I don't know how to handle this type of field!");
 
             }
@@ -402,6 +427,7 @@ namespace GDSaveEditor
             byte[] mysteryField = Read_Bytes(fs, enc, 16);
 
             Block1 block1 = (Block1)readBlock(1, typeof(Block1), fs, enc);
+            Block2 block2 = (Block2)readBlock(2, typeof(Block2), fs, enc);
             return;
         }
 
