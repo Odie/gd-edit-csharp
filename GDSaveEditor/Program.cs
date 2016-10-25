@@ -54,12 +54,26 @@ namespace GDSaveEditor
                 actionMap.Add(new ActionItem(
                     (idx+1).ToString(), 
                     saveFileDir.Substring(saveFileDir.LastIndexOf("_")), 
-                    () => { Globals.activeCharacterFile = saveFileDir; }));
+                    () => {
+                        Globals.activeCharacterFile = saveFileDir;
+                        characterManipuationScreen();
+                    }));
             });
 
             Globals.activeActionMap = actionMap;
         }
 
+        static void characterManipuationScreen()
+        {
+            Console.WriteLine("File: {0}", Globals.activeCharacterFile);
+
+            var actionMap = new List<ActionItem>
+            {
+                new ActionItem("r", "Reload", () => { loadCharacterFile(Path.Combine(Globals.activeCharacterFile, "player.gdc")); })
+            };
+
+            Globals.activeActionMap = actionMap;
+        }
 
         // Print whatever is in the action map
         static void printActiveActionMap()
@@ -70,10 +84,8 @@ namespace GDSaveEditor
             }
         }
 
-        static void processInput()
+        static void processInput(string input)
         {
-            var input = Console.ReadLine();
-
             // Try to look up the input in the action map
             foreach(var action in Globals.activeActionMap)
             {
@@ -104,9 +116,108 @@ namespace GDSaveEditor
                 printActiveActionMap();
                 Console.WriteLine();
                 Console.Write("> ");
-                processInput();
+
+                var input = Console.ReadLine();
+                Console.WriteLine();
+                processInput(input);
             }
             
+        }
+
+        private static byte Read_Byte(Stream s, Encrypter encrypter)
+        {
+            // FIXME!!! Allocate small buffers over and over again is typically very "slow".
+            // But since we're processing such small save files, we'll just abuse the GC a bit.
+            byte[] data = new byte[1];
+            s.Read(data, 0, 1);
+            uint val = (uint)data[0] ^ encrypter.state;
+            encrypter.updateState(data);
+            return BitConverter.GetBytes(val)[0];
+        }
+
+        private static bool Read_Bool(Stream s, Encrypter encrypter)
+        {
+            return Read_Byte(s, encrypter) == 1;
+        }
+
+        private static uint Read_UInt32(Stream s, Encrypter encrypter)
+        {
+            byte[] data = new byte[4];
+            s.Read(data, 0, 4);
+            uint val = BitConverter.ToUInt32(data, 0) ^ encrypter.state;
+            encrypter.updateState(data);
+            return val;
+        }
+
+        class Encrypter
+        {
+            uint[] encTable;
+            public uint state;
+
+            public Encrypter(uint seed)
+            {
+                encTable = generateTable(seed);
+                state = seed;
+            }
+
+            public void updateState(byte[] data)
+            {
+                for(int i = 0; i < data.Length; i++)
+                {
+                    state = state ^ encTable[data[i]];
+                }
+            }
+
+            public static uint[] generateTable(uint seed)
+            {
+                uint[] table = new uint[byte.MaxValue]; // 256 entry table
+                uint num1 = seed;
+                uint idx = 0;
+                checked
+                {
+                    // Construct a table of 256 value for decrytpion and encryption.
+                    // We start with some state value = seed
+                    // With each byte read, update the state value like this:
+                    //  state = state ^ table[ byte_value ]
+                    // The value of latter bytes are effected by value of previous bytes.
+                    // This also means if we fail to update our state with any byte read, 
+                    // we'll get junk data out. 
+                    for (uint i = 0; i <= byte.MaxValue; i++)
+                    {
+                        num1 = BitConverter.ToUInt32(
+                                BitConverter.GetBytes(
+                                    Convert.ToInt64(num1 << 31 | num1 >> 1) *
+                                    Convert.ToInt64(39916801))
+                                , 0);
+
+                        table[idx] = num1;
+                    }
+                }
+                return table;
+            }
+        }
+        
+
+        static void loadCharacterFile(string filepath)
+        {
+            FileStream fs = new FileStream(filepath, FileMode.Open, FileAccess.Read);
+            if (fs == null)
+                return;
+
+            fs.Position = 0L;
+            BinaryReader reader = new BinaryReader(fs);
+
+            // File Format notes:
+            //  Encryption seed - 4 bytes
+            //  Magic number - 4 bytes ("GDCX")
+
+            // Read and seed the encrytpion table
+            Encrypter enc = new Encrypter(reader.ReadUInt32() ^ 1431655765U);
+
+            // Try to read the file marker ("GDCX")
+            if(Read_UInt32(fs, enc) != 0x58434447)
+                throw new Exception("Incorrect magic ID read!");
+
         }
 
         // Get back a list of grim dawn save directories that appears to have a player.gdc file
