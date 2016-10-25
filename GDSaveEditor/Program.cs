@@ -310,11 +310,173 @@ namespace GDSaveEditor
             public float energy;
         }
 
-        static Object readStructure(System.Type type, Stream s, Encrypter encrypter) {
+        public abstract class Item
+        {
+            public string baseName;
+            public string prefixName;
+            public string suffixName;
+            public string modifierName;
+            public string transmuteName;
+            public uint seed;
+
+            public string relicName;
+            public string relicBonus;
+            public uint relicSeed;
+
+            public string augmentName;
+            public uint unknown;
+            public uint augmentSeed;
+
+            public uint var1;
+            public uint stackCount;
+        }
+
+        public class InventoryItem : Item
+        {
+            public uint X;
+            public uint Y;
+        }
+
+        public class StashItem : Item
+        {
+            public float X;
+            public float Y;
+        }
+
+        public class EquipmentItem : Item
+        {
+            public bool Attached;
+        }
+
+        public class InventorySack
+        {
+            public bool UnusedBoolean;
+            public List<InventoryItem> items = new List<InventoryItem>();
+        }
+
+        private static InventorySack ReadSack(Stream s, Encrypter encrypter)
+        {
+            // Check the ID of the block
+            uint expectedBlockID = 0;
+            uint readBlockID = Read_UInt32(s, encrypter);
+            if (readBlockID != expectedBlockID)
+                throw new Exception(String.Format("Expected block {0} but got {1}!", expectedBlockID, readBlockID));
+
+            // Read the length of the block
+            BinaryReader reader = new BinaryReader(s);
+            uint blockLength = reader.ReadUInt32() ^ encrypter.state;
+
+            // Initialize an equipment sack
+            InventorySack sack = new InventorySack();
+            sack.UnusedBoolean = Read_Bool(s, encrypter);
+            int numItems = (int)Read_UInt32(s, encrypter);
+
+            // Read in the items in the sack
+            for (int i = 0; i < numItems; i++)
+                sack.items.Add((InventoryItem)readStructure(typeof(InventoryItem), s, encrypter));
+
+            // Read the block end marker
+            uint endMarker = reader.ReadUInt32();
+            if (endMarker != encrypter.state)
+                throw new Exception(String.Format("Wrong checksum at the end of block {0}!", expectedBlockID));
+
+            return sack;
+        }
+        private static void ReadBlock3(Stream s, Encrypter encrypter)
+        {
+            // Check the ID of the block
+            uint expectedBlockID = 3;
+            uint readBlockID = Read_UInt32(s, encrypter);
+            if (readBlockID != expectedBlockID)
+                throw new Exception(String.Format("Expected block {0} but got {1}!", expectedBlockID, readBlockID));
+
+            // Read the length of the block
+            BinaryReader reader = new BinaryReader(s);
+            uint blockLength = reader.ReadUInt32() ^ encrypter.state;
+            
+            uint version = Read_UInt32(s, encrypter);
+            if(version != 4)
+                throw new Exception(String.Format("Inventory block version mismatch!  Unknown version {0}.", version));
+
+            bool hasData = Read_Bool(s, encrypter);
+            if(hasData)
+            {
+                UInt32 sackCount = Read_UInt32(s, encrypter);
+                UInt32 focusedSack = Read_UInt32(s, encrypter);
+                UInt32 selectedSack = Read_UInt32(s, encrypter);
+
+                var inventorySacks = new List<InventorySack>();
+                for (int i = 0; i < sackCount; i++)
+                    inventorySacks.Add(ReadSack(s, encrypter));
+
+                Boolean useAltWeaponSet = Read_Bool(s, encrypter);
+
+                var equipment = new List<EquipmentItem>();
+                for (int i = 0; i < 12; i++)
+                {
+                    equipment.Add((EquipmentItem)readStructure(typeof(EquipmentItem), s, encrypter));
+                }
+  
+                Boolean alternate1 = Read_Bool(s, encrypter);
+                var alternateSet1 = new List<EquipmentItem>();
+                for (int i = 0; i < 2; i++)
+                {
+                    alternateSet1.Add((EquipmentItem)readStructure(typeof(EquipmentItem), s, encrypter));
+                }
+
+                Boolean alternate2 = Read_Bool(s, encrypter);
+                var alternateSet2 = new List<EquipmentItem>();
+                for (int i = 0; i < 2; i++)
+                {
+                    alternateSet2.Add((EquipmentItem)readStructure(typeof(EquipmentItem), s, encrypter));
+                }
+            }
+
+            // Read the block end marker
+            uint endMarker = reader.ReadUInt32();
+            if (endMarker != encrypter.state)
+                throw new Exception(String.Format("Wrong checksum at the end of block {0}!", expectedBlockID));
+        }
+
+        // Builds a flattened "ordered" list of field names given a type.
+        //
+        // For some reason, when you ask for a list of fields for a class, the fields come in "reverse hiearchy order".
+        // As in, the fields in the leaf nodes are stated first, then the fields in the parent/base classes.
+        // This means we need to reshuffle the fields a bit to get them into the "correct" order.
+        //
+        // In this case, "correct" is the order we want to deserialize the data.
+        // This problem was encountered when trying to deserialize various different types of items.
+        // There are apparently 3 different types/formats for an item, and they different slightly in the fields that
+        // they carry. We want to abuse the hierarchy tree so we don't need to duplicate identical fields and still
+        // get the correct serialization order.
+        static List<FieldInfo> buildOrderedFieldList(Type type)
+        {
+            var hierarchyOrder = new List<Type>();
+
+            Type typeCursor = type;
+            while (typeCursor != typeof(Object))
+            {
+                hierarchyOrder.Add(typeCursor);
+                typeCursor = typeCursor.BaseType;
+            }
+
+            hierarchyOrder.Reverse();
+
+            var orderedFieldList = new List<FieldInfo>();
+            foreach(var t in hierarchyOrder)
+            {
+                var fields = t.GetFields();
+                var wantedFields = fields.Take(fields.Length - orderedFieldList.Count);
+                orderedFieldList.AddRange(wantedFields);
+            }
+            return orderedFieldList;
+        }
+
+        static Object readStructure(Type type, Stream s, Encrypter encrypter) {
             // Create an instance of the object to be filled with data
             Object instance = Activator.CreateInstance(type);
 
-            FieldInfo[] fieldInfos = type.GetFields();
+            var fieldInfos = buildOrderedFieldList(type);
             foreach (var field in fieldInfos)
             {
                 if(field.FieldType == typeof(string))
@@ -375,9 +537,11 @@ namespace GDSaveEditor
             if (readBlockID != expectedBlockID)
                 throw new Exception(String.Format("Expected block {0} but got {1}!", expectedBlockID, readBlockID));
 
-            // Read the length and the contents of the block
+            // Read the length of the block
             BinaryReader reader = new BinaryReader(s);
             uint blockLength = reader.ReadUInt32() ^ encrypter.state;
+
+            // Read the content of the block
             object blockInstance = readStructure(blockType, s, encrypter);
 
             // Read the block end marker
@@ -428,6 +592,7 @@ namespace GDSaveEditor
 
             Block1 block1 = (Block1)readBlock(1, typeof(Block1), fs, enc);
             Block2 block2 = (Block2)readBlock(2, typeof(Block2), fs, enc);
+            ReadBlock3(fs, enc);
             return;
         }
 
