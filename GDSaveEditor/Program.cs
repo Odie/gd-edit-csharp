@@ -4,9 +4,19 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using System.Reflection;
 
 namespace GDSaveEditor
 {
+    public class OnDiskEncoding : System.Attribute
+    {
+        public readonly System.Type encoding;
+        public OnDiskEncoding(System.Type encoding)
+        {
+            this.encoding = encoding;
+        }
+    }
+
     public static class Extensions
     {
         public static void Each<T>(this IEnumerable<T> ie, Action<T, int> action)
@@ -124,15 +134,26 @@ namespace GDSaveEditor
             
         }
 
-        private static byte Read_Byte(Stream s, Encrypter encrypter)
+        private static byte[] Read_Bytes(Stream s, Encrypter encrypter, int byteCount)
         {
             // FIXME!!! Allocate small buffers over and over again is typically very "slow".
             // But since we're processing such small save files, we'll just abuse the GC a bit.
-            byte[] data = new byte[1];
-            s.Read(data, 0, 1);
-            byte val = (byte)(data[0] ^ (byte)encrypter.state);
-            encrypter.updateState(val);
-            return val;
+            byte[] data = new byte[byteCount];
+            s.Read(data, 0, byteCount);
+
+            for (int i = 0; i < data.Length; i++)
+            {
+                byte decryptedVal = (byte)(data[i] ^ (byte)encrypter.state);
+                encrypter.updateState(data[i]);
+                data[i] = decryptedVal;
+            }
+
+            return data;
+        }
+
+        private static byte Read_Byte(Stream s, Encrypter encrypter)
+        {
+            return Read_Bytes(s, encrypter, 1)[0];
         }
 
         private static bool Read_Bool(Stream s, Encrypter encrypter)
@@ -140,13 +161,41 @@ namespace GDSaveEditor
             return Read_Byte(s, encrypter) == 1;
         }
 
+        // Read a 4 byte value
+        // Note that we cannot use the "Read_bytes" function because they make use of the encrypter state differently.
+        // This function uses the entire 4 bytes of the encrypter state to decrypt the value.
+        // Read_Bytes will ignore the 3 higher bytes.
         private static uint Read_UInt32(Stream s, Encrypter encrypter)
-        {
+        {   
             byte[] data = new byte[4];
             s.Read(data, 0, 4);
             uint val = BitConverter.ToUInt32(data, 0) ^ encrypter.state;
             encrypter.updateState(data);
             return val;
+        }
+
+        private static string Read_String(Stream s, Encrypter encrypter)
+        {
+            uint length = Read_UInt32(s, encrypter);
+            if (length == 0)
+                return string.Empty;
+            if (length >= int.MaxValue)
+                throw new Exception("Too many bytes to read!");
+
+            byte[] data = Read_Bytes(s, encrypter, (int)length);
+            return Encoding.ASCII.GetString(data);
+        }
+
+        private static string Read_WString(Stream s, Encrypter encrypter)
+        {
+            uint length = Read_UInt32(s, encrypter);
+            if (length == 0)
+                return string.Empty;
+            if (length >= int.MaxValue)
+                throw new Exception("Too many bytes to read!");
+
+            byte[] data = Read_Bytes(s, encrypter, (int)length * 2);
+            return Encoding.Unicode.GetString(data);
         }
 
         class Encrypter
@@ -201,7 +250,64 @@ namespace GDSaveEditor
                 return table;
             }
         }
-        
+
+        class Header
+        {
+            [OnDiskEncoding(typeof(UnicodeEncoding))]
+            public string characterName;
+
+            public Boolean male;
+            public string playerClassName;
+            public UInt32 characterLevel;
+            public bool hardcoreMode;
+        }
+
+        static Object readStructure(System.Type type, Stream s, Encrypter encrypter) {
+            // Create an instance of the object to be filled with data
+            Object instance = Activator.CreateInstance(type);
+
+            FieldInfo[] fieldInfos = type.GetFields();
+            foreach (var field in fieldInfos)
+            {
+                if(field.FieldType == typeof(string))
+                {
+                    // Determine the encoding we want to use to read the data
+                    // Default to reading everything as ascii
+                    Type encoding = typeof(ASCIIEncoding);
+
+                    // Some items should be read as UTF-16. 
+                    // Those fields will be have a custom attribute on them to override the default.
+                    OnDiskEncoding spec = (OnDiskEncoding)field.GetCustomAttribute(typeof(OnDiskEncoding));
+                    if (spec != null)
+                        encoding = spec.encoding;
+
+                    // Read the string
+                    // NOTE: We're using the .NET encoding types as some sort of enum to get the compiler to
+                    // help us not enter gibberish as the encoding.
+                    string value = null;
+                    if (encoding == typeof(ASCIIEncoding))
+                        value = Read_String(s, encrypter);
+                    else if (encoding == typeof(UnicodeEncoding))
+                        value = Read_WString(s, encrypter);
+                    else
+                        throw new Exception("Bad structure declaration!");
+
+                    field.SetValue(instance, value);
+                }
+                else if (field.FieldType == typeof(bool))
+                {
+                    field.SetValue(instance, Read_Bool(s, encrypter));
+                }
+                else if (field.FieldType == typeof(uint))
+                {
+                    field.SetValue(instance, Read_UInt32(s, encrypter));
+                }
+
+            }
+
+            return instance;
+        }
+
 
         static void loadCharacterFile(string filepath)
         {
@@ -228,6 +334,9 @@ namespace GDSaveEditor
             if(headerVersion != 1)
                 throw new Exception(String.Format("Incorrect header version!  Unknown version {0}", headerVersion));
 
+            Header header = (Header)readStructure(typeof(Header), fs, enc);
+
+            return;
         }
 
         // Get back a list of grim dawn save directories that appears to have a player.gdc file
