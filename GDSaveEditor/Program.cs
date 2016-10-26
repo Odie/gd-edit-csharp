@@ -296,7 +296,7 @@ namespace GDSaveEditor
             Write_Bytes(s, encrypter, Encoding.Unicode.GetBytes(data));
         }
 
-        class Encrypter
+        internal class Encrypter
         {
             uint[] encTable;
             public uint state;
@@ -436,31 +436,59 @@ namespace GDSaveEditor
         {
             public bool UnusedBoolean;
             public List<InventoryItem> items = new List<InventoryItem>();
+
+            static public InventorySack Read(Stream s, Encrypter encrypter)
+            {
+                // Check the ID of the block
+                readVerifyBlockStartMarker(0, s, encrypter);
+                
+                // Read the length of the block
+                uint blockLength = readBlockLength(s, encrypter);
+
+                // Initialize an equipment sack
+                InventorySack sack = new InventorySack();
+                sack.UnusedBoolean = Read_Bool(s, encrypter);
+                int numItems = (int)Read_UInt32(s, encrypter);
+
+                // Read in the items in the sack
+                for (int i = 0; i < numItems; i++)
+                    sack.items.Add((InventoryItem)readStructure(typeof(InventoryItem), s, encrypter));
+
+                // Read the block end marker
+                readVerifyBlockEndMarker(0, s, encrypter);
+                
+                return sack;
+            }
+
+            static public void Write(Stream s, Encrypter encrypter, InventorySack sack)
+            {
+                // We're ready to output the contents to file
+                // Write the ID of the block to be written
+                Write_UInt32(s, encrypter, 0);
+
+                // Write the length of the block
+                long blockStartPos = s.Position;
+                uint blockStartEncState = encrypter.state;
+                s.Write(BitConverter.GetBytes(0), 0, 4);
+
+                // Since we are in the write method, and writeStructure will try to invoke it if possible,
+                // make sure to tell it to skip the "write" method  
+                writeStructure(sack, s, encrypter, WriteStructureOption.SkipWriteMethod);
+
+                // Now that we've written the data, go back and fill in the length field
+                writeBlockLength(s, encrypter, blockStartPos, s.Position, blockStartEncState);
+
+                // Write the encrypter state for stream syncing
+                s.Write(BitConverter.GetBytes(encrypter.state), 0, 4);
+            }
+
+            public void Write(Stream s, Encrypter encrypter)
+            {
+                Write(s, encrypter, this);
+            }
         }
 
-        private static InventorySack ReadSack(Stream s, Encrypter encrypter)
-        {
-            // Check the ID of the block
-            readVerifyBlockStartMarker(0, s, encrypter);
-            
-            // Read the length of the block
-            BinaryReader reader = new BinaryReader(s);
-            uint blockLength = reader.ReadUInt32() ^ encrypter.state;
 
-            // Initialize an equipment sack
-            InventorySack sack = new InventorySack();
-            sack.UnusedBoolean = Read_Bool(s, encrypter);
-            int numItems = (int)Read_UInt32(s, encrypter);
-
-            // Read in the items in the sack
-            for (int i = 0; i < numItems; i++)
-                sack.items.Add((InventoryItem)readStructure(typeof(InventoryItem), s, encrypter));
-
-            // Read the block end marker
-            readVerifyBlockEndMarker(0, s, encrypter);
-            
-            return sack;
-        }
 
         class Block3
         {
@@ -491,7 +519,7 @@ namespace GDSaveEditor
             public byte[] data = new byte[16];
         }
 
-        private static Block3 ReadBlock3(Stream s, Encrypter encrypter)
+        static Block3 ReadBlock3(Stream s, Encrypter encrypter)
         {
             // Check the ID of the block
             readVerifyBlockStartMarker(3, s, encrypter);
@@ -515,7 +543,7 @@ namespace GDSaveEditor
 
                 // Read all sacks
                 for (int i = 0; i < data.sackCount; i++)
-                    data.inventorySacks.Add(ReadSack(s, encrypter));
+                    data.inventorySacks.Add(InventorySack.Read(s, encrypter));
 
                 data.useAltWeaponSet = Read_Bool(s, encrypter);
 
@@ -544,6 +572,56 @@ namespace GDSaveEditor
             readVerifyBlockEndMarker(3, s, encrypter);
 
             return data;
+        }
+
+        static void WriteBlock3(Stream s, Encrypter encrypter, Block3 data)
+        {
+            // Write the ID of the block to be written
+            Write_UInt32(s, encrypter, blockGetID(data));
+
+            // Write the dummy length of the block
+            long blockStartPos = s.Position;
+            uint blockStartEncState = encrypter.state;
+            s.Write(BitConverter.GetBytes(0), 0, 4);
+
+            // MiscNote: This isn't likely to ever happen. The game starts with the character sacks and some equipment!
+            Write_UInt32(s, encrypter, data.version);
+            if (data.sackCount == 0 && data.focusedSack == 0 && data.selectedSack == 0)
+            {
+                Write_Bool(s, encrypter, false);
+                return;
+            }
+
+            Write_Bool(s, encrypter, true);
+            Write_UInt32(s, encrypter, data.sackCount);
+            Write_UInt32(s, encrypter, data.focusedSack);
+            Write_UInt32(s, encrypter, data.selectedSack);
+
+            // Write all sacks
+            for (int i = 0; i < data.sackCount; i++)
+                InventorySack.Write(s, encrypter, data.inventorySacks[i]);
+
+            Write_Bool(s, encrypter, data.useAltWeaponSet);
+
+            // Write equipment
+            for (int i = 0; i < 12; i++)
+                writeStructure(data.equipment[i], s, encrypter);
+
+            // Write alternate set 1
+            Write_Bool(s, encrypter, data.alternate1);
+            for (int i = 0; i < 2; i++)
+                writeStructure(data.alternateSet1[i], s, encrypter);
+
+            // Read alternate set 2
+            Write_Bool(s, encrypter, data.alternate2);
+            for (int i = 0; i < 2; i++)
+                writeStructure(data.alternateSet2[i], s, encrypter);
+
+            // Write out the length of the block
+            writeBlockLength(s, encrypter, blockStartPos, s.Position, blockStartEncState);
+              
+            // Write out the encrypter state for stream sync checks
+            s.Write(BitConverter.GetBytes(encrypter.state), 0, 4);
         }
 
         class SpawnPoints
@@ -870,6 +948,23 @@ namespace GDSaveEditor
             return null;
         }
 
+        static void Write_Basic_Type(object data, Stream s, Encrypter encrypter)
+        {
+            Type type = data.GetType();
+            if (type == typeof(string))
+                Write_String(s, encrypter, (string)data);
+            else if (type == typeof(bool))
+                Write_Bool(s, encrypter, (bool)data);
+            else if (type == typeof(uint))
+                Write_UInt32(s, encrypter, (UInt32)data);
+            else if (type == typeof(byte))
+                Write_Byte(s, encrypter, (byte)data);
+            else if (type == typeof(float))
+                Write_Float(s, encrypter, (float)data);
+            else
+                throw new Exception("Got a non-basic type!");
+        }
+
         // Reads in a structure of the specified type from the stream.
         //
         // This function deserializes data in the order the fields are listed in the given type.
@@ -991,7 +1086,12 @@ namespace GDSaveEditor
             return instance;
         }
 
-        static Object writeStructure(object instance, Stream s, Encrypter encrypter) {
+        enum WriteStructureOption{
+            Normal = 0,
+            SkipWriteMethod = 1,
+        }
+        
+        static Object writeStructure(object instance, Stream s, Encrypter encrypter, WriteStructureOption option = WriteStructureOption.Normal) {
             // Create an instance of the object to be filled with data
             Console.WriteLine("Serializing {0}", instance.GetType());
 
@@ -1039,58 +1139,49 @@ namespace GDSaveEditor
                 }
                 else if (field.FieldType == typeof(byte[]))
                 {
-                    // Looks like we're expecting a byte array
-                    byte[] array = (byte[])field.GetValue(instance);
-
-                    // Read in the exact size we're expecting
-                    array = Read_Bytes(s, encrypter, array.Length);
-
-                    // Place the newly read data back into the field location
-                    field.SetValue(instance, array);
+                    byte[] data = (byte[])field.GetValue(instance);
+                    Write_Bytes(s, encrypter, data);
                 }
                 else if (field.FieldType.IsGenericType && field.FieldType.GetGenericTypeDefinition() == typeof(List<>))
                 {
                     // What kind of items do we want to read?
                     Type itemType = field.FieldType.GetGenericArguments()[0];
 
-                    // How many of them are there?
-                    int itemCount = 0;
-                    StaticCount count = (StaticCount)field.GetCustomAttribute(typeof(StaticCount));
-                    if (count != null)
-                        itemCount = count.count;
-                    else
-                        itemCount = (int)Read_UInt32(s, encrypter);
-
-                    //Console.WriteLine("Substructure: {0}, count = {1}", itemType, itemCount);
-
-                    // Where are we storing the items?
+                    // Where are we getting the items from?
                     dynamic list = field.GetValue(instance);
 
-                    // How will we read the item?
-                    // We read in basic types differently than "complex" or "compound" types
+                    Console.WriteLine("Writing Substructure: {0}, count = {1}", itemType, list.Count);
+
+                    // How will we write the item?
                     bool basicType = isBasicType(itemType);
 
-                    // Start reading
-                    for(int i = 0; i < itemCount; i++)
+                    // Write in the number of items we're about to write
+                    Write_UInt32(s, encrypter, (uint)list.Count);
+
+                    // Start writing
+                    for (int i = 0; i < list.Count; i++)
                     {
-                        // Read in a single item
-                        dynamic item;
+                        // Grab the item to be written
+                        dynamic item = list[i];
 
-                        // If it's a basic type, try to read it
+                        // Try to write the item
+                        // We'll have to handle a few different cases
+
                         if (basicType)
-                            item = Read_Basic_Type(itemType, s, encrypter);
+                            Write_Basic_Type(itemType, s, encrypter);
 
-                        // If the thing to be create has an attached static "Read" method, invoke it
-                        else if (itemType.GetMethod("Read") != null && itemType.GetMethod("Read").IsStatic)
+                        // If the thing to be create has an attached "Write" method, invoke it
+                        else if (
+                            (option & WriteStructureOption.SkipWriteMethod) == 0 &&
+                            itemType.GetMethod("Write", BindingFlags.Instance | BindingFlags.Public) != null)
                         {
-                            MethodInfo info = itemType.GetMethod("Read");
-                            item = info.Invoke(null, new object[] { s, encrypter });
+                            MethodInfo info = itemType.GetMethod("Write", BindingFlags.Instance | BindingFlags.Public);
+                            info.Invoke(item, new object[] { s, encrypter });
                         }
 
                         // Otherwise, maybe we can recurively create the structure
                         else
-                            item = readStructure(itemType, s, encrypter);
-                        list.Add(item);
+                            writeStructure(item, s, encrypter);
                     }
                 }
                 else 
@@ -1159,6 +1250,21 @@ namespace GDSaveEditor
             return reader.ReadUInt32() ^ encrypter.state;
         }
 
+        static void writeBlockLength(Stream s, Encrypter encrypter, long blockStartPos, long blockEndPos, uint encState)
+        {
+            // Save the current position
+            long curPos = s.Position;
+
+            // Go back to where we should write the length field
+            s.Seek(blockStartPos, SeekOrigin.Begin);
+
+            //Write the length
+            s.Write(BitConverter.GetBytes((blockEndPos - blockStartPos - 4) ^ encState), 0, 4);
+
+            // Restore the stream position
+            s.Seek(curPos, SeekOrigin.Begin);
+        }
+
         static bool readVerifyBlockEndMarker(uint expectedBlockID, Stream s, Encrypter encrypter)
         {
             // Read the block end marker
@@ -1209,23 +1315,21 @@ namespace GDSaveEditor
 
         static void writeBlock(object block, Stream s, Encrypter encrypter)
         {
-            // So how many bytes are we writing?
-            // First, serialize out the data without encryption
-            var memStream = new MemoryStream();
-            writeStructure(block, memStream, null);
-
-            // Now, we're ready to output the contents to file
             // Write the ID of the block to be written
             Write_UInt32(s, encrypter, blockGetID(block));
 
-            // Write the length of the block
-            var encStateOrig = encrypter.state;
-            Write_UInt32(s, encrypter, (uint)memStream.Length);
-            encrypter.state = encStateOrig;
+            // Write the dummy length of the block
+            // We'll come back and fill this in later
+            long blockStartPos = s.Position;
+            uint blockStartEncState = encrypter.state;
+            s.Write(BitConverter.GetBytes(0), 0, 4);
 
             // Write out the structure
             // Alternatively, we may be able to just go through an encryption pass on the plaintext data
-            writeStructure(block, s, encrypter); 
+            writeStructure(block, s, encrypter);
+
+            // Now that we've written the data, go back and fill in the length field
+            writeBlockLength(s, encrypter, blockStartPos, s.Position, blockStartEncState);
 
             // Write out the encrypter state for stream sync checks
             s.Write(BitConverter.GetBytes(encrypter.state), 0, 4);
@@ -1341,6 +1445,16 @@ namespace GDSaveEditor
             return character;
         }
 
+        static void writeBlocksInOrder(List<Type> blockWriteOrder, List<object> blockList, Stream s, Encrypter encrypter)
+        {
+            foreach (var blockType in blockWriteOrder)
+            {
+                // Find a block in the block list of the correct type
+                object block = blockList.Find(x => x.GetType() == blockType);
+                writeBlock(block, s, encrypter);
+            }
+        }
+
         static bool writeCharacterFile(string filepath, Dictionary<string, dynamic> character)
         {
             // Open given file and truncate all existing content
@@ -1375,15 +1489,14 @@ namespace GDSaveEditor
                 // Now we start writing all the known blocks
                 var blockWriteOrder = new List<Type>()
                 {
-                    typeof(Block1)
+                    typeof(Block1),
+                    typeof(Block2)
                 };
+                writeBlocksInOrder(blockWriteOrder, blockList, fs, enc);
 
-                foreach(var blockType in blockWriteOrder)
-                {
-                    // Find a block in the block list of the correct type
-                    object block = blockList.Find(x => x.GetType() == blockType);
-                    writeBlock(block, fs, enc);
-                }
+                // Fetch and write block 3
+                Block3 block = (Block3)blockList.Find(x => x.GetType() == typeof(Block3));
+                WriteBlock3(fs, enc, block);
             }
             return true;
         }
