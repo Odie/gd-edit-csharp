@@ -759,6 +759,31 @@ namespace GDSaveEditor
                 }
                 return hotSlot;
             }
+
+            public static void Write(Stream s, Encrypter encrypter, HotSlot data)
+            {
+                Write_UInt32(s, encrypter, data.HotSlotType);
+                switch (data.HotSlotType)
+                {
+                    case 0:
+                        Write_String(s, encrypter, data.SkillName);
+                        Write_Bool(s, encrypter, data.IsItemSkill);
+                        Write_String(s, encrypter, data.ItemName);
+                        Write_UInt32(s, encrypter, data.ItemEquipLocation);
+                        break;
+                    case 4:
+                        Write_String(s, encrypter, data.ItemName);
+                        Write_String(s, encrypter, data.BitmapUp);
+                        Write_String(s, encrypter, data.BitmapDown);
+                        Write_WString(s, encrypter, data.DefaultText);
+                        break;
+                }
+            }
+
+            public void Write(Stream s, Encrypter encrypter)
+            {
+                Write(s, encrypter, this);
+            }
         }
         
         class Block14
@@ -965,7 +990,7 @@ namespace GDSaveEditor
 
             // Create an instance of the object to be filled with data
             Object instance = Activator.CreateInstance(type);
-            //Console.WriteLine("Serializing {0}", type);
+            //Console.WriteLine("Deserializing {0}", type);
 
             var fieldInfos = buildOrderedFieldList(type);
             foreach (var field in fieldInfos)
@@ -1054,8 +1079,8 @@ namespace GDSaveEditor
         }
         
         static void writeStructure(object instance, Stream s, Encrypter encrypter, WriteStructureOption option = WriteStructureOption.Normal) {
-            Console.WriteLine("Serializing {0}", instance.GetType());
             Type type = instance.GetType();
+            //Console.WriteLine("Serializing {0}", type);
 
             if (isBasicType(type))
             {
@@ -1093,6 +1118,8 @@ namespace GDSaveEditor
                     // NOTE: We're using the .NET encoding types as some sort of enum to get the compiler to
                     // help us not enter gibberish as the encoding.
                     string value = (string)field.GetValue(instance);
+                    if (value == null)
+                        continue;
                     if (encoding == typeof(ASCIIEncoding))
                         Write_String(s, encrypter, value);
                     else if (encoding == typeof(UnicodeEncoding))
@@ -1107,6 +1134,8 @@ namespace GDSaveEditor
                 else if (field.FieldType == typeof(byte[]))
                 {
                     byte[] data = (byte[])field.GetValue(instance);
+                    if (data == null)
+                        continue;
                     Write_Bytes(s, encrypter, data);
                 }
                 else if (field.FieldType.IsGenericType && field.FieldType.GetGenericTypeDefinition() == typeof(List<>))
@@ -1117,13 +1146,20 @@ namespace GDSaveEditor
                     // Where are we getting the items from?
                     dynamic list = field.GetValue(instance);
 
-                    Console.WriteLine("Writing Substructure: {0}, count = {1}", itemType, list.Count);
+                    //Console.WriteLine("Writing Substructure: {0}, count = {1}", itemType, list.Count);
 
                     // How will we write the item?
                     bool basicType = isBasicType(itemType);
 
                     // Write in the number of items we're about to write
-                    Write_UInt32(s, encrypter, (uint)list.Count);
+                    //
+                    // Only do this if we're supposed to be writing a list of a dynamic length
+                    // For lists/arrays with a static length (StaticCount attribute attached), this means
+                    // the reading logic will assume it knows how many items to read.
+                    // For those types of items, skip writing the list length.
+                    StaticCount count = (StaticCount)field.GetCustomAttribute(typeof(StaticCount));
+                    if (count == null)
+                        Write_UInt32(s, encrypter, (uint)list.Count);
 
                     // Start writing
                     for (int i = 0; i < list.Count; i++)
@@ -1438,6 +1474,18 @@ namespace GDSaveEditor
                     typeof(Block1),
                     typeof(Block2),
                     typeof(Block3),
+                    typeof(Block4),
+                    typeof(Block5),
+                    typeof(Block6),
+                    typeof(Block7),
+                    typeof(Block17),
+                    typeof(Block8),
+                    typeof(Block12),
+                    typeof(Block13),
+                    typeof(Block14),
+                    typeof(Block15),
+                    typeof(Block16),
+                    typeof(Block10),
                 };
                 writeBlocksInOrder(blockWriteOrder, blockList, fs, enc);
             }
