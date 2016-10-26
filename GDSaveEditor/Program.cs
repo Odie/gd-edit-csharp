@@ -549,14 +549,6 @@ namespace GDSaveEditor
 
             static public void Write(Stream s, Encrypter encrypter, Block3 data)
             {
-                // Write the ID of the block to be written
-                Write_UInt32(s, encrypter, blockGetID(data));
-
-                // Write the dummy length of the block
-                long blockStartPos = s.Position;
-                uint blockStartEncState = encrypter.state;
-                s.Write(BitConverter.GetBytes(0), 0, 4);
-
                 // MiscNote: This isn't likely to ever happen. The game starts with the character sacks and some equipment!
                 Write_UInt32(s, encrypter, data.version);
                 if (data.sackCount == 0 && data.focusedSack == 0 && data.selectedSack == 0)
@@ -589,15 +581,9 @@ namespace GDSaveEditor
                 Write_Bool(s, encrypter, data.alternate2);
                 for (int i = 0; i < 2; i++)
                     writeStructure(data.alternateSet2[i], s, encrypter);
-
-                // Write out the length of the block
-                writeBlockLength(s, encrypter, blockStartPos, s.Position, blockStartEncState);
-
-                // Write out the encrypter state for stream sync checks
-                s.Write(BitConverter.GetBytes(encrypter.state), 0, 4);
             }
 
-            void Write(Stream s, Encrypter encrypter)
+            public void Write(Stream s, Encrypter encrypter)
             {
                 Write(s, encrypter, this);
             }
@@ -967,7 +953,7 @@ namespace GDSaveEditor
             if (isBasicType(type))
                 return Read_Basic_Type(type, s, encrypter);
 
-            // If the thing to be create has an attached static "Read" method, invoke it
+            // If the type has supplied a custom "Read" handler, call it.
             MethodInfo methodInfo = type.GetMethod("Read", BindingFlags.Static | BindingFlags.Public);
             if (methodInfo != null)
             {
@@ -975,7 +961,7 @@ namespace GDSaveEditor
             }
 
             // Neither of those methods worked.
-            // We must be looking at a more complex type.
+            // We'll try to read in the structure driven by the fields of the structure itself
 
             // Create an instance of the object to be filled with data
             Object instance = Activator.CreateInstance(type);
@@ -1067,9 +1053,26 @@ namespace GDSaveEditor
             SkipWriteMethod = 1,
         }
         
-        static Object writeStructure(object instance, Stream s, Encrypter encrypter, WriteStructureOption option = WriteStructureOption.Normal) {
-            // Create an instance of the object to be filled with data
+        static void writeStructure(object instance, Stream s, Encrypter encrypter, WriteStructureOption option = WriteStructureOption.Normal) {
             Console.WriteLine("Serializing {0}", instance.GetType());
+            Type type = instance.GetType();
+
+            if (isBasicType(type))
+            {
+                Write_Basic_Type(instance, s, encrypter);
+                return;
+            }
+
+            // If the type has supplied a custom "Write" handler, call it.
+            MethodInfo methodInfo = type.GetMethod("Write", BindingFlags.Instance | BindingFlags.Public);
+            if (methodInfo != null && (option & WriteStructureOption.SkipWriteMethod) == 0)
+            {
+                methodInfo.Invoke(instance, new object[] { s, encrypter });
+                return;
+            }
+
+            // Neither of those methods worked.
+            // We'll try to write out the structure driven by the fields of the structure itself
 
             var fieldInfos = buildOrderedFieldList(instance.GetType());
             foreach (var field in fieldInfos)
@@ -1097,21 +1100,9 @@ namespace GDSaveEditor
                     else
                         throw new Exception("Bad structure declaration!");
                 }
-                else if (field.FieldType == typeof(bool))
+                else if (isBasicType(field.FieldType))
                 {
-                    Write_Bool(s, encrypter, (bool)field.GetValue(instance));
-                }
-                else if (field.FieldType == typeof(uint))
-                {
-                    Write_UInt32(s, encrypter, (UInt32)field.GetValue(instance));
-                }
-                else if (field.FieldType == typeof(byte))
-                {
-                    Write_Byte(s, encrypter, (byte)field.GetValue(instance));
-                }
-                else if (field.FieldType == typeof(float))
-                {
-                    Write_Float(s, encrypter, (float)field.GetValue(instance));
+                    Write_Basic_Type(field.GetValue(instance), s, encrypter);
                 }
                 else if (field.FieldType == typeof(byte[]))
                 {
@@ -1137,35 +1128,14 @@ namespace GDSaveEditor
                     // Start writing
                     for (int i = 0; i < list.Count; i++)
                     {
-                        // Grab the item to be written
                         dynamic item = list[i];
-
-                        // Try to write the item
-                        // We'll have to handle a few different cases
-
-                        if (basicType)
-                            Write_Basic_Type(itemType, s, encrypter);
-
-                        // If the thing to be create has an attached "Write" method, invoke it
-                        else if (
-                            (option & WriteStructureOption.SkipWriteMethod) == 0 &&
-                            itemType.GetMethod("Write", BindingFlags.Instance | BindingFlags.Public) != null)
-                        {
-                            MethodInfo info = itemType.GetMethod("Write", BindingFlags.Instance | BindingFlags.Public);
-                            info.Invoke(item, new object[] { s, encrypter });
-                        }
-
-                        // Otherwise, maybe we can recurively create the structure
-                        else
-                            writeStructure(item, s, encrypter);
+                        writeStructure(item, s, encrypter);
                     }
                 }
                 else 
                     throw new Exception("I don't know how to handle this type of field!");
 
             }
-
-            return instance;
         }
 
         // Merges the top level fields in the given object into the given dictionary.
@@ -1466,13 +1436,10 @@ namespace GDSaveEditor
                 var blockWriteOrder = new List<Type>()
                 {
                     typeof(Block1),
-                    typeof(Block2)
+                    typeof(Block2),
+                    typeof(Block3),
                 };
                 writeBlocksInOrder(blockWriteOrder, blockList, fs, enc);
-
-                // Fetch and write block 3
-                Block3 block = (Block3)blockList.Find(x => x.GetType() == typeof(Block3));
-                Block3.Write(fs, enc, block);
             }
             return true;
         }
