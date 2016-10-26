@@ -654,6 +654,59 @@ namespace GDSaveEditor
             public List<UInt32> tutorialsUnlocked = new List<UInt32>();
         }
 
+        public class GreatestMonsterKilled
+        {
+            public string name;
+            public UInt32 level;
+            public UInt32 lifeMana;
+            public string lastMonsterHit;
+            public string lastMonsterHitBy;
+        }
+
+        class Block16
+        {
+            public UInt32 version;
+            public UInt32 playtimeSeconds;
+            public UInt32 deathCount;
+            public UInt32 killCount;
+            public UInt32 experienceFromKills;
+            public UInt32 healthPotionsUsed;
+            public UInt32 energyPotionsUsed;
+            public UInt32 maxLevel;
+            public UInt32 hitReceived;
+            public UInt32 hitsInflicted;
+            public UInt32 critsInflicted;
+            public UInt32 critsReceived;
+            public float greatestDamageDone;
+
+            [StaticCount(3)]
+            public List<GreatestMonsterKilled> greatestMonsterKilled = new List<GreatestMonsterKilled>();
+
+            public UInt32 championKills;
+            public float lastMonsterHitDA;
+            public float lastMonsterHitOA;
+            public float greatestDamageReceived;
+            public UInt32 heroKills;
+            public UInt32 itemsCrafted;
+            public UInt32 relicsCrafted;
+            public UInt32 tier2RelicsCrafted;
+            public UInt32 tier3RelicsCrafted;
+            public UInt32 devotionShrinesUnlocked;
+            public UInt32 oneShotChestsUnlocked;
+            public UInt32 loreNotesCollected;
+
+            [StaticCount(3)]
+            public List<UInt32> bossKills = new List<UInt32>();
+
+            // These 4 fields should only be parsed if version is 9
+            public UInt32 survivalGreatestWave;
+            public UInt32 survivalGreatestScore;
+            public UInt32 survivalDefenseBuilt;
+            public UInt32 survivalPowerUpsActivated;
+
+            public UInt32 uniqueItemsFound;
+            public UInt32 randomizedItemsFound;
+        }
 
         // Builds a flattened "ordered" list of field names given a type.
         //
@@ -883,13 +936,17 @@ namespace GDSaveEditor
             // Verify that we're reading the beginning of a block
             // Will succeed or throw error
             readVerifyBlockStartMarker(expectedBlockID, s, encrypter);
-            
+
             // Read the length of the block
-            BinaryReader reader = new BinaryReader(s);
-            uint blockLength = reader.ReadUInt32() ^ encrypter.state;
+            uint blockLength = readBlockLength(s, encrypter);
+            long expectedBlockEndPosition = s.Position + (long)blockLength;
 
             // Read the content of the block
             object blockInstance = readStructure(blockType, s, encrypter);
+
+            // Did we end on the right position?
+            if (s.Position != expectedBlockEndPosition)
+                throw new Exception(String.Format("Block {0} ended on the wrong position", expectedBlockID));
 
             // Stream sync check
             // Verify that we're reading the end of a block
@@ -950,6 +1007,7 @@ namespace GDSaveEditor
             Block13 block13 = (Block13)readBlock(13, typeof(Block13), fs, enc);
             Block14 block14 = (Block14)readBlock(14, typeof(Block14), fs, enc);
             Block15 block15 = (Block15)readBlock(15, typeof(Block15), fs, enc);
+            Block16 block16 = (Block16)readBlock(16, typeof(Block16), fs, enc);
             return;
         }
 
