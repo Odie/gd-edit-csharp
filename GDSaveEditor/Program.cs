@@ -49,8 +49,11 @@ namespace GDSaveEditor
         public Action action;
     }
 
+    delegate void ShowScreenState();
+
     class Globals
     {
+        public static ShowScreenState showScreenState;
         public static List<ActionItem> activeActionMap;
         public static string activeCharacterFile;
         public static Dictionary<string, object> character;
@@ -79,7 +82,10 @@ namespace GDSaveEditor
 
         static void saveFileSelectionScreen()
         {
-            Console.WriteLine("The following characters were found. Please select one to edit.");
+            Globals.showScreenState = new ShowScreenState(() =>
+            {
+                Console.WriteLine("The following characters were found. Please select one to edit.");
+            });
 
             // Find all the save files!
             var saveFileDirs = findSaveFileDirs();
@@ -103,10 +109,13 @@ namespace GDSaveEditor
 
         static void characterManipuationScreen()
         {
-            Console.WriteLine("File: {0}", Globals.activeCharacterFile);
+            Globals.showScreenState = new ShowScreenState(() =>
+            {
+                Console.WriteLine("File: {0}", Globals.activeCharacterFile);
+            });
 
             // If we haven't loaded the character yet, auto load it now
-            if(Globals.character == null && Globals.activeCharacterFile != null)
+            if (Globals.character == null && Globals.activeCharacterFile != null)
                 Globals.character = loadCharacterFile(getCharacterFilepath(Globals.activeCharacterFile));
 
             var actionMap = new List<ActionItem>
@@ -122,6 +131,9 @@ namespace GDSaveEditor
 
                     // Write out the new character file
                     writeCharacterFile(characterFilepath, Globals.character);
+                }),
+                new ActionItem("c", "cycle", () => {
+                    Console.WriteLine("Doing nothing!");
                 }),
             };
 
@@ -152,7 +164,7 @@ namespace GDSaveEditor
             }
 
             // Otherwise, try to deal with it as an application input
-            if (input.ToLower() == "exit")
+            if (input.ToLower() == "exit" || input.ToLower() == "quit")
                 Environment.Exit(0);
 
             // If we can't deal with it, print an error
@@ -166,6 +178,11 @@ namespace GDSaveEditor
 
             while(true)
             {
+                if (Globals.showScreenState != null)
+                {
+                    Globals.showScreenState();
+                    Console.WriteLine();
+                }
                 printActiveActionMap();
                 Console.WriteLine();
                 Console.Write("> ");
@@ -173,6 +190,7 @@ namespace GDSaveEditor
                 var input = Console.ReadLine();
                 Console.WriteLine();
                 processInput(input);
+                Console.WriteLine();
             }
             
         }
