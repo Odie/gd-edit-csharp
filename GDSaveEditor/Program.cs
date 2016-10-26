@@ -546,6 +546,19 @@ namespace GDSaveEditor
             public List<ItemSkill> itemSkills = new List<ItemSkill>();
         }
 
+        class Tokens
+        {
+            public List<String> names = new List<String>();
+        }
+
+        class Block10
+        {
+            public UInt32 version;
+
+            [StaticCount(3)]
+            public List<Tokens> tokenPerDifficulty = new List<Tokens>();
+        }
+
         class Shrines
         {
             public List<UID> shrineIDs = new List<UID>();
@@ -959,56 +972,66 @@ namespace GDSaveEditor
 
         static void loadCharacterFile(string filepath)
         {
-            FileStream fs = new FileStream(filepath, FileMode.Open, FileAccess.Read);
-            if (fs == null)
+            using (FileStream fs = new FileStream(filepath, FileMode.Open, FileAccess.Read))
+            {
+                if (fs == null)
+                    return;
+
+                fs.Position = 0L;
+                BinaryReader reader = new BinaryReader(fs);
+
+                // File Format notes:
+                //  Encryption seed - 4 bytes
+                //  Magic number - 4 bytes ("GDCX")
+                //  Header version - 4 bytes (must be 1)
+
+                // Read and seed the encrytpion table
+                Encrypter enc = new Encrypter(reader.ReadUInt32() ^ 1431655765U);
+
+                // Try to read the file marker ("GDCX")
+                if (Read_UInt32(fs, enc) != 0x58434447)
+                    throw new Exception("Incorrect magic ID read!");
+
+                uint headerVersion = Read_UInt32(fs, enc);
+                if (headerVersion != 1)
+                    throw new Exception(String.Format("Incorrect header version!  Unknown version {0}", headerVersion));
+
+                Header header = (Header)readStructure(typeof(Header), fs, enc);
+
+                uint checksum = reader.ReadUInt32();
+                if (checksum != enc.state)
+                    throw new Exception("Checksum mismatch!");
+
+                uint dataVersion = Read_UInt32(fs, enc);
+                if (dataVersion != 6 && dataVersion != 7)
+                    throw new Exception(String.Format("Incorrect data version!  Unknown version {0}.", dataVersion));
+
+                byte[] mysteryField = Read_Bytes(fs, enc, 16);
+
+                // TODO!!! It might be a good idea to peak at the file to determine type of the next block to be read
+                // instead of relying on a specific order.
+                Block1 block1 = (Block1)readBlock(1, typeof(Block1), fs, enc);
+                Block2 block2 = (Block2)readBlock(2, typeof(Block2), fs, enc);
+                Block3 block3 = ReadBlock3(fs, enc);
+                Block4 block4 = (Block4)readBlock(4, typeof(Block4), fs, enc);
+                Block5 block5 = (Block5)readBlock(5, typeof(Block5), fs, enc);
+                Block6 block6 = (Block6)readBlock(6, typeof(Block6), fs, enc);
+                Block7 block7 = (Block7)readBlock(7, typeof(Block7), fs, enc);
+                Block17 block17 = (Block17)readBlock(17, typeof(Block17), fs, enc);
+                Block8 block8 = (Block8)readBlock(8, typeof(Block8), fs, enc);
+                Block12 block12 = (Block12)readBlock(12, typeof(Block12), fs, enc);
+                Block13 block13 = (Block13)readBlock(13, typeof(Block13), fs, enc);
+                Block14 block14 = (Block14)readBlock(14, typeof(Block14), fs, enc);
+                Block15 block15 = (Block15)readBlock(15, typeof(Block15), fs, enc);
+                Block16 block16 = (Block16)readBlock(16, typeof(Block16), fs, enc);
+                Block10 block10 = (Block10)readBlock(10, typeof(Block10), fs, enc);
+
+                // Did we read through the entire file?
+                if (fs.Position != fs.Length)
+                    throw new Exception("Done reading character file but did not reach EOF");
+
                 return;
-
-            fs.Position = 0L;
-            BinaryReader reader = new BinaryReader(fs);
-
-            // File Format notes:
-            //  Encryption seed - 4 bytes
-            //  Magic number - 4 bytes ("GDCX")
-            //  Header version - 4 bytes (must be 1)
-
-            // Read and seed the encrytpion table
-            Encrypter enc = new Encrypter(reader.ReadUInt32() ^ 1431655765U);
-
-            // Try to read the file marker ("GDCX")
-            if(Read_UInt32(fs, enc) != 0x58434447)
-                throw new Exception("Incorrect magic ID read!");
-
-            uint headerVersion = Read_UInt32(fs, enc);
-            if(headerVersion != 1)
-                throw new Exception(String.Format("Incorrect header version!  Unknown version {0}", headerVersion));
-
-            Header header = (Header)readStructure(typeof(Header), fs, enc);
-
-            uint checksum = reader.ReadUInt32();
-            if(checksum != enc.state)
-                throw new Exception("Checksum mismatch!");
-
-            uint dataVersion = Read_UInt32(fs, enc);
-            if(dataVersion != 6 && dataVersion != 7)
-                throw new Exception(String.Format("Incorrect data version!  Unknown version {0}.", dataVersion));
-
-            byte[] mysteryField = Read_Bytes(fs, enc, 16);
-
-            Block1 block1 = (Block1)readBlock(1, typeof(Block1), fs, enc);
-            Block2 block2 = (Block2)readBlock(2, typeof(Block2), fs, enc);
-            Block3 block3 = ReadBlock3(fs, enc);
-            Block4 block4 = (Block4)readBlock(4, typeof(Block4), fs, enc);
-            Block5 block5 = (Block5)readBlock(5, typeof(Block5), fs, enc);
-            Block6 block6 = (Block6)readBlock(6, typeof(Block6), fs, enc);
-            Block7 block7 = (Block7)readBlock(7, typeof(Block7), fs, enc);
-            Block17 block17 = (Block17)readBlock(17, typeof(Block17), fs, enc);
-            Block8 block8 = (Block8)readBlock(8, typeof(Block8), fs, enc);
-            Block12 block12 = (Block12)readBlock(12, typeof(Block12), fs, enc);
-            Block13 block13 = (Block13)readBlock(13, typeof(Block13), fs, enc);
-            Block14 block14 = (Block14)readBlock(14, typeof(Block14), fs, enc);
-            Block15 block15 = (Block15)readBlock(15, typeof(Block15), fs, enc);
-            Block16 block16 = (Block16)readBlock(16, typeof(Block16), fs, enc);
-            return;
+            }
         }
 
 
