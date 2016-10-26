@@ -648,6 +648,13 @@ namespace GDSaveEditor
             public float cameraDistance;
         }
 
+        class Block15
+        {
+            public UInt32 version;
+            public List<UInt32> tutorialsUnlocked = new List<UInt32>();
+        }
+
+
         // Builds a flattened "ordered" list of field names given a type.
         //
         // For some reason, when you ask for a list of fields for a class, the fields come in "reverse hiearchy order".
@@ -942,6 +949,7 @@ namespace GDSaveEditor
             Block12 block12 = (Block12)readBlock(12, typeof(Block12), fs, enc);
             Block13 block13 = (Block13)readBlock(13, typeof(Block13), fs, enc);
             Block14 block14 = (Block14)readBlock(14, typeof(Block14), fs, enc);
+            Block15 block15 = (Block15)readBlock(15, typeof(Block15), fs, enc);
             return;
         }
 
