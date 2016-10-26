@@ -488,8 +488,6 @@ namespace GDSaveEditor
             }
         }
 
-
-
         class Block3
         {
             public UInt32 version;
@@ -503,6 +501,106 @@ namespace GDSaveEditor
             public List<EquipmentItem> alternateSet1 = new List<EquipmentItem>();
             public Boolean alternate2;
             public List<EquipmentItem> alternateSet2 = new List<EquipmentItem>();
+
+            static public Block3 Read(Stream s, Encrypter encrypter)
+            {
+                Block3 data = new Block3();
+
+                data.version = Read_UInt32(s, encrypter);
+                if (data.version != 4)
+                    throw new Exception(String.Format("Inventory block version mismatch!  Unknown version {0}.", data.version));
+
+                bool hasData = Read_Bool(s, encrypter);
+                if (hasData)
+                {
+                    data.sackCount = Read_UInt32(s, encrypter);
+                    data.focusedSack = Read_UInt32(s, encrypter);
+                    data.selectedSack = Read_UInt32(s, encrypter);
+
+                    // Read all sacks
+                    for (int i = 0; i < data.sackCount; i++)
+                        data.inventorySacks.Add(InventorySack.Read(s, encrypter));
+
+                    data.useAltWeaponSet = Read_Bool(s, encrypter);
+
+                    // Read equipment
+                    for (int i = 0; i < 12; i++)
+                    {
+                        data.equipment.Add((EquipmentItem)readStructure(typeof(EquipmentItem), s, encrypter));
+                    }
+
+                    // Read alternate set 1
+                    data.alternate1 = Read_Bool(s, encrypter);
+                    for (int i = 0; i < 2; i++)
+                    {
+                        data.alternateSet1.Add((EquipmentItem)readStructure(typeof(EquipmentItem), s, encrypter));
+                    }
+
+                    // Read alternate set 2
+                    data.alternate2 = Read_Bool(s, encrypter);
+                    for (int i = 0; i < 2; i++)
+                    {
+                        data.alternateSet2.Add((EquipmentItem)readStructure(typeof(EquipmentItem), s, encrypter));
+                    }
+                }
+
+                return data;
+            }
+
+            static public void Write(Stream s, Encrypter encrypter, Block3 data)
+            {
+                // Write the ID of the block to be written
+                Write_UInt32(s, encrypter, blockGetID(data));
+
+                // Write the dummy length of the block
+                long blockStartPos = s.Position;
+                uint blockStartEncState = encrypter.state;
+                s.Write(BitConverter.GetBytes(0), 0, 4);
+
+                // MiscNote: This isn't likely to ever happen. The game starts with the character sacks and some equipment!
+                Write_UInt32(s, encrypter, data.version);
+                if (data.sackCount == 0 && data.focusedSack == 0 && data.selectedSack == 0)
+                {
+                    Write_Bool(s, encrypter, false);
+                    return;
+                }
+
+                Write_Bool(s, encrypter, true);
+                Write_UInt32(s, encrypter, data.sackCount);
+                Write_UInt32(s, encrypter, data.focusedSack);
+                Write_UInt32(s, encrypter, data.selectedSack);
+
+                // Write all sacks
+                for (int i = 0; i < data.sackCount; i++)
+                    InventorySack.Write(s, encrypter, data.inventorySacks[i]);
+
+                Write_Bool(s, encrypter, data.useAltWeaponSet);
+
+                // Write equipment
+                for (int i = 0; i < 12; i++)
+                    writeStructure(data.equipment[i], s, encrypter);
+
+                // Write alternate set 1
+                Write_Bool(s, encrypter, data.alternate1);
+                for (int i = 0; i < 2; i++)
+                    writeStructure(data.alternateSet1[i], s, encrypter);
+
+                // Read alternate set 2
+                Write_Bool(s, encrypter, data.alternate2);
+                for (int i = 0; i < 2; i++)
+                    writeStructure(data.alternateSet2[i], s, encrypter);
+
+                // Write out the length of the block
+                writeBlockLength(s, encrypter, blockStartPos, s.Position, blockStartEncState);
+
+                // Write out the encrypter state for stream sync checks
+                s.Write(BitConverter.GetBytes(encrypter.state), 0, 4);
+            }
+
+            void Write(Stream s, Encrypter encrypter)
+            {
+                Write(s, encrypter, this);
+            }
         }
 
         class Block4
@@ -519,110 +617,6 @@ namespace GDSaveEditor
             public byte[] data = new byte[16];
         }
 
-        static Block3 ReadBlock3(Stream s, Encrypter encrypter)
-        {
-            // Check the ID of the block
-            readVerifyBlockStartMarker(3, s, encrypter);
-            
-            // Read the length of the block
-            BinaryReader reader = new BinaryReader(s);
-            uint blockLength = reader.ReadUInt32() ^ encrypter.state;
-
-            Block3 data = new Block3();
-
-            data.version = Read_UInt32(s, encrypter);
-            if(data.version != 4)
-                throw new Exception(String.Format("Inventory block version mismatch!  Unknown version {0}.", data.version));
-
-            bool hasData = Read_Bool(s, encrypter);
-            if(hasData)
-            {
-                data.sackCount = Read_UInt32(s, encrypter);
-                data.focusedSack = Read_UInt32(s, encrypter);
-                data.selectedSack = Read_UInt32(s, encrypter);
-
-                // Read all sacks
-                for (int i = 0; i < data.sackCount; i++)
-                    data.inventorySacks.Add(InventorySack.Read(s, encrypter));
-
-                data.useAltWeaponSet = Read_Bool(s, encrypter);
-
-                // Read equipment
-                for (int i = 0; i < 12; i++)
-                {
-                    data.equipment.Add((EquipmentItem)readStructure(typeof(EquipmentItem), s, encrypter));
-                }
-  
-                // Read alternate set 1
-                data.alternate1 = Read_Bool(s, encrypter);
-                for (int i = 0; i < 2; i++)
-                {
-                    data.alternateSet1.Add((EquipmentItem)readStructure(typeof(EquipmentItem), s, encrypter));
-                }
-
-                // Read alternate set 2
-                data.alternate2 = Read_Bool(s, encrypter);
-                for (int i = 0; i < 2; i++)
-                {
-                    data.alternateSet2.Add((EquipmentItem)readStructure(typeof(EquipmentItem), s, encrypter));
-                }
-            }
-
-            // Read the block end marker
-            readVerifyBlockEndMarker(3, s, encrypter);
-
-            return data;
-        }
-
-        static void WriteBlock3(Stream s, Encrypter encrypter, Block3 data)
-        {
-            // Write the ID of the block to be written
-            Write_UInt32(s, encrypter, blockGetID(data));
-
-            // Write the dummy length of the block
-            long blockStartPos = s.Position;
-            uint blockStartEncState = encrypter.state;
-            s.Write(BitConverter.GetBytes(0), 0, 4);
-
-            // MiscNote: This isn't likely to ever happen. The game starts with the character sacks and some equipment!
-            Write_UInt32(s, encrypter, data.version);
-            if (data.sackCount == 0 && data.focusedSack == 0 && data.selectedSack == 0)
-            {
-                Write_Bool(s, encrypter, false);
-                return;
-            }
-
-            Write_Bool(s, encrypter, true);
-            Write_UInt32(s, encrypter, data.sackCount);
-            Write_UInt32(s, encrypter, data.focusedSack);
-            Write_UInt32(s, encrypter, data.selectedSack);
-
-            // Write all sacks
-            for (int i = 0; i < data.sackCount; i++)
-                InventorySack.Write(s, encrypter, data.inventorySacks[i]);
-
-            Write_Bool(s, encrypter, data.useAltWeaponSet);
-
-            // Write equipment
-            for (int i = 0; i < 12; i++)
-                writeStructure(data.equipment[i], s, encrypter);
-
-            // Write alternate set 1
-            Write_Bool(s, encrypter, data.alternate1);
-            for (int i = 0; i < 2; i++)
-                writeStructure(data.alternateSet1[i], s, encrypter);
-
-            // Read alternate set 2
-            Write_Bool(s, encrypter, data.alternate2);
-            for (int i = 0; i < 2; i++)
-                writeStructure(data.alternateSet2[i], s, encrypter);
-
-            // Write out the length of the block
-            writeBlockLength(s, encrypter, blockStartPos, s.Position, blockStartEncState);
-              
-            // Write out the encrypter state for stream sync checks
-            s.Write(BitConverter.GetBytes(encrypter.state), 0, 4);
-        }
 
         class SpawnPoints
         {
@@ -910,18 +904,14 @@ namespace GDSaveEditor
 
         static bool isBasicType(Type type)
         {
-            HashSet<Type> set = new HashSet<Type>() {
-                typeof(string),
-                typeof(bool),
-                typeof(uint),
-                typeof(byte),
-                typeof(float),
-            };
-
-            if (set.Contains(type))
+            if (type == typeof(string) ||
+                type == typeof(bool) ||
+                type == typeof(uint) ||
+                type == typeof(byte) ||
+                type == typeof(float))
                 return true;
-            else
-                return false;
+
+            return false;
         }
 
         // Given a "basic type", read and return such an object
@@ -974,6 +964,19 @@ namespace GDSaveEditor
         // using the structure to deserialize into. We don't need to hand code the deserialization
         // of every field.
         static Object readStructure(Type type, Stream s, Encrypter encrypter) {
+            if (isBasicType(type))
+                return Read_Basic_Type(type, s, encrypter);
+
+            // If the thing to be create has an attached static "Read" method, invoke it
+            MethodInfo methodInfo = type.GetMethod("Read", BindingFlags.Static | BindingFlags.Public);
+            if (methodInfo != null)
+            {
+                return methodInfo.Invoke(null, new object[] { s, encrypter });
+            }
+
+            // Neither of those methods worked.
+            // We must be looking at a more complex type.
+
             // Create an instance of the object to be filled with data
             Object instance = Activator.CreateInstance(type);
             //Console.WriteLine("Serializing {0}", type);
@@ -1006,21 +1009,9 @@ namespace GDSaveEditor
 
                     field.SetValue(instance, value);
                 }
-                else if (field.FieldType == typeof(bool))
+                else if (isBasicType(field.FieldType))
                 {
-                    field.SetValue(instance, Read_Bool(s, encrypter));
-                }
-                else if (field.FieldType == typeof(uint))
-                {
-                    field.SetValue(instance, Read_UInt32(s, encrypter));
-                }
-                else if (field.FieldType == typeof(byte))
-                {
-                    field.SetValue(instance, Read_Byte(s, encrypter));
-                }
-                else if (field.FieldType == typeof(float))
-                {
-                    field.SetValue(instance, Read_Float(s, encrypter));
+                    field.SetValue(instance, Read_Basic_Type(field.FieldType, s, encrypter));
                 }
                 else if (field.FieldType == typeof(byte[]))
                 {
@@ -1059,22 +1050,7 @@ namespace GDSaveEditor
                     for(int i = 0; i < itemCount; i++)
                     {
                         // Read in a single item
-                        dynamic item;
-
-                        // If it's a basic type, try to read it
-                        if (basicType)
-                            item = Read_Basic_Type(itemType, s, encrypter);
-
-                        // If the thing to be create has an attached static "Read" method, invoke it
-                        else if (itemType.GetMethod("Read") != null && itemType.GetMethod("Read").IsStatic)
-                        {
-                            MethodInfo info = itemType.GetMethod("Read");
-                            item = info.Invoke(null, new object[] { s, encrypter });
-                        }
-
-                        // Otherwise, maybe we can recurively create the structure
-                        else
-                            item = readStructure(itemType, s, encrypter);
+                        dynamic item = readStructure(itemType, s, encrypter);
                         list.Add(item);
                     }
                 }
@@ -1398,7 +1374,7 @@ namespace GDSaveEditor
                 blockList.Add(block1);
                 Block2 block2 = (Block2)readBlock(2, typeof(Block2), fs, enc);
                 blockList.Add(block2);
-                Block3 block3 = ReadBlock3(fs, enc);
+                Block3 block3 = (Block3)readBlock(3, typeof(Block3), fs, enc);
                 blockList.Add(block3);
                 Block4 block4 = (Block4)readBlock(4, typeof(Block4), fs, enc);
                 blockList.Add(block4);
@@ -1496,7 +1472,7 @@ namespace GDSaveEditor
 
                 // Fetch and write block 3
                 Block3 block = (Block3)blockList.Find(x => x.GetType() == typeof(Block3));
-                WriteBlock3(fs, enc, block);
+                Block3.Write(fs, enc, block);
             }
             return true;
         }
