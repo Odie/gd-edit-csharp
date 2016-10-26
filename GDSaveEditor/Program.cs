@@ -170,15 +170,6 @@ namespace GDSaveEditor
             return Read_Byte(s, encrypter) == 1;
         }
 
-        //private int Read_Int32()
-        //{
-        //    byte[] numArray = new byte[4];
-        //    this.msStream.Read(numArray, 0, 4);
-        //    int num = checked((int)((long)BitConverter.ToInt32(numArray, 0) ^ (long)this.checksum));
-        //    this.Hash(numArray, 4U);
-        //    return num;
-        //}
-
         // Read a 4 byte value
         // Note that we cannot use the "Read_bytes" function because they make use of the encrypter state differently.
         // This function uses the entire 4 bytes of the encrypter state to decrypt the value.
@@ -497,7 +488,7 @@ namespace GDSaveEditor
             public UInt32 version;
 
             [StaticCount(3)]
-            public List<Teleporters> spawnPoints = new List<Teleporters>();
+            public List<Teleporters> teleporterPoints = new List<Teleporters>();
         }
 
         class Markers
@@ -795,6 +786,14 @@ namespace GDSaveEditor
             return null;
         }
 
+        // Reads in a structure of the specified type from the stream.
+        //
+        // This function deserializes data in the order the fields are listed in the given type.
+        // This means that the declared order is very important. If the declared order is wrong,
+        // then the deserialization will be done incorrectly.
+        // The benefit of such an approach is that we can encode the format of the character file
+        // using the structure to deserialize into. We don't need to hand code the deserialization
+        // of every field.
         static Object readStructure(Type type, Stream s, Encrypter encrypter) {
             // Create an instance of the object to be filled with data
             Object instance = Activator.CreateInstance(type);
@@ -908,6 +907,41 @@ namespace GDSaveEditor
             return instance;
         }
 
+        // Merges the top level fields in the given object into the given dictionary.
+        //
+        // The declared block structures are used to deal with the file format. But since character related
+        // data is scattered throughout so many structures, it is hard to locate the exact fields we want to
+        // examine.
+        //
+        // This function is meant to merge the fields into a giant dictionary for better programmatic manipuation.
+        // It's possible, though unlikely, that different blocks have identical field names. If such a case were
+        // to occur, the most straight forward thing to do is to rename conflicting block fields.
+        static bool mergeStructureIntoDictionary(Dictionary<string, object> character, object block)
+        {
+            var fieldInfos = block.GetType().GetFields();
+
+            // Walk through all fields in the block
+            foreach (var field in fieldInfos)
+            {
+                // Every block has a version field
+                // They are part of the file format info, not character information
+                // Skip those
+                if (field.Name == "version")
+                    continue;
+
+                // Does the field alrady exist in the dictionary?
+                // If so, we've come across a block fieldname conflict.
+                // This needs to be resolved manually.
+                if(character.ContainsKey(field.Name))
+                    throw new Exception(String.Format("Duplicate key name {0} found when merging block fields", field.Name));
+
+                // Otherwise, put the field into the character
+                character[field.Name] = field.GetValue(block);
+            }
+
+            return true;
+        }
+
         //**************************************************************************************
         // Block Reading utilities
         //
@@ -970,12 +1004,15 @@ namespace GDSaveEditor
         }
 
 
-        static void loadCharacterFile(string filepath)
+        static Dictionary<string, object> loadCharacterFile(string filepath)
         {
+            List<object> blockList = new List<object>();
+
+            // Read through all blocks and collect them into the block list
             using (FileStream fs = new FileStream(filepath, FileMode.Open, FileAccess.Read))
             {
                 if (fs == null)
-                    return;
+                    return null;
 
                 fs.Position = 0L;
                 BinaryReader reader = new BinaryReader(fs);
@@ -997,6 +1034,7 @@ namespace GDSaveEditor
                     throw new Exception(String.Format("Incorrect header version!  Unknown version {0}", headerVersion));
 
                 Header header = (Header)readStructure(typeof(Header), fs, enc);
+                blockList.Add(header);
 
                 uint checksum = reader.ReadUInt32();
                 if (checksum != enc.state)
@@ -1008,30 +1046,57 @@ namespace GDSaveEditor
 
                 byte[] mysteryField = Read_Bytes(fs, enc, 16);
 
+
                 // TODO!!! It might be a good idea to peak at the file to determine type of the next block to be read
                 // instead of relying on a specific order.
                 Block1 block1 = (Block1)readBlock(1, typeof(Block1), fs, enc);
+                blockList.Add(block1);
                 Block2 block2 = (Block2)readBlock(2, typeof(Block2), fs, enc);
+                blockList.Add(block2);
                 Block3 block3 = ReadBlock3(fs, enc);
+                blockList.Add(block3);
                 Block4 block4 = (Block4)readBlock(4, typeof(Block4), fs, enc);
+                blockList.Add(block4);
                 Block5 block5 = (Block5)readBlock(5, typeof(Block5), fs, enc);
+                blockList.Add(block5);
                 Block6 block6 = (Block6)readBlock(6, typeof(Block6), fs, enc);
+                blockList.Add(block6);
                 Block7 block7 = (Block7)readBlock(7, typeof(Block7), fs, enc);
+                blockList.Add(block7);
                 Block17 block17 = (Block17)readBlock(17, typeof(Block17), fs, enc);
+                blockList.Add(block17);
                 Block8 block8 = (Block8)readBlock(8, typeof(Block8), fs, enc);
+                blockList.Add(block8);
                 Block12 block12 = (Block12)readBlock(12, typeof(Block12), fs, enc);
+                blockList.Add(block12);
                 Block13 block13 = (Block13)readBlock(13, typeof(Block13), fs, enc);
+                blockList.Add(block13);
                 Block14 block14 = (Block14)readBlock(14, typeof(Block14), fs, enc);
+                blockList.Add(block14);
                 Block15 block15 = (Block15)readBlock(15, typeof(Block15), fs, enc);
+                blockList.Add(block15);
                 Block16 block16 = (Block16)readBlock(16, typeof(Block16), fs, enc);
+                blockList.Add(block16);
                 Block10 block10 = (Block10)readBlock(10, typeof(Block10), fs, enc);
+                blockList.Add(block10);
 
                 // Did we read through the entire file?
                 if (fs.Position != fs.Length)
                     throw new Exception("Done reading character file but did not reach EOF");
-
-                return;
             }
+
+            // Merge all blocks to get an overview of all character properties
+            Dictionary<string, object> character = new Dictionary<string, object>();
+            foreach(var block in blockList)
+            {
+                mergeStructureIntoDictionary(character, block);
+            }
+
+            // Hold on to the block list.
+            // We're likely to need this when we serialize the character out to a file again.
+            character["blockList"] = blockList;
+
+            return character;
         }
 
 
