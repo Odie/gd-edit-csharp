@@ -1197,6 +1197,40 @@ namespace GDSaveEditor
             return blockInstance;
         }
 
+        // Given a block "object", figure out what the block ID should be when written to disk
+        static UInt32 blockGetID(object block)
+        {
+            Type t = block.GetType();
+            if (t.Name.StartsWith("Block"))
+                return Convert.ToUInt32(t.Name.Substring(5));
+            else
+                return 0xffffffff;
+        }
+
+        static void writeBlock(object block, Stream s, Encrypter encrypter)
+        {
+            // So how many bytes are we writing?
+            // First, serialize out the data without encryption
+            var memStream = new MemoryStream();
+            writeStructure(block, memStream, null);
+
+            // Now, we're ready to output the contents to file
+            // Write the ID of the block to be written
+            Write_UInt32(s, encrypter, blockGetID(block));
+
+            // Write the length of the block
+            var encStateOrig = encrypter.state;
+            Write_UInt32(s, encrypter, (uint)memStream.Length);
+            encrypter.state = encStateOrig;
+
+            // Write out the structure
+            // Alternatively, we may be able to just go through an encryption pass on the plaintext data
+            writeStructure(block, s, encrypter); 
+
+            // Write out the encrypter state for stream sync checks
+            s.Write(BitConverter.GetBytes(encrypter.state), 0, 4);
+        }
+
         class LoadFileInfo
         {
             public UInt32 seed;
@@ -1321,11 +1355,35 @@ namespace GDSaveEditor
 
                 Encrypter enc = new Encrypter(seed);
                 Write_UInt32(fs, enc, 0x58434447);
+
+                //--------------------------------------------------------------
+                // Header block
                 Write_UInt32(fs, enc, loadInfo.headerVersion);
 
                 List<object> blockList = character["meta-blockList"];
                 Header header = (Header) blockList.Find(x => x.GetType() == typeof(Header));
                 writeStructure(header, fs, enc);
+
+                fs.Write(BitConverter.GetBytes(enc.state), 0, 4);
+                // Header block
+                //--------------------------------------------------------------
+
+                Write_UInt32(fs, enc, loadInfo.dataVersion);
+                Write_Bytes(fs, enc, loadInfo.mysteryField);
+
+                // All the preambles are written
+                // Now we start writing all the known blocks
+                var blockWriteOrder = new List<Type>()
+                {
+                    typeof(Block1)
+                };
+
+                foreach(var blockType in blockWriteOrder)
+                {
+                    // Find a block in the block list of the correct type
+                    object block = blockList.Find(x => x.GetType() == blockType);
+                    writeBlock(block, fs, enc);
+                }
             }
             return true;
         }
