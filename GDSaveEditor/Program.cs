@@ -581,6 +581,73 @@ namespace GDSaveEditor
             public List<Faction> factionValues = new List<Faction>();
         }
 
+        class HotSlot
+        {
+            public string SkillName;
+            public string ItemName;
+            public string BitmapUp;
+            public string BitmapDown;
+            public string DefaultText;
+            public uint HotSlotType;
+            public uint ItemEquipLocation;
+            public bool IsItemSkill;
+
+            public static HotSlot Read(Stream s, Encrypter encrypter)
+            {
+                HotSlot hotSlot = new HotSlot();
+                hotSlot.HotSlotType = Read_UInt32(s, encrypter);
+                switch (hotSlot.HotSlotType)
+                {
+                    case 0:
+                        hotSlot.SkillName = Read_String(s, encrypter);
+                        hotSlot.IsItemSkill = Read_Bool(s, encrypter);
+                        hotSlot.ItemName = Read_String(s, encrypter);
+                        hotSlot.ItemEquipLocation = Read_UInt32(s, encrypter);
+                        break;
+                    case 4:
+                        hotSlot.ItemName = Read_String(s, encrypter);
+                        hotSlot.BitmapUp = Read_String(s, encrypter);
+                        hotSlot.BitmapDown = Read_String(s, encrypter);
+                        hotSlot.DefaultText = Read_WString(s, encrypter);
+                        break;
+                }
+                return hotSlot;
+            }
+        }
+        
+        class Block14
+        {
+            public UInt32 version;
+            public Boolean equipmentSelection;
+            public UInt32 skillWindowSelection;
+            public Boolean skillSettingValid;
+
+            public string primarySkill1;
+            public string secondarySkill1;
+            public Boolean skillActive1;
+
+            public string primarySkill2;
+            public string secondarySkill2;
+            public Boolean skillActive2;
+
+            public string primarySkill3;
+            public string secondarySkill3;
+            public Boolean skillActive3;
+
+            public string primarySkill4;
+            public string secondarySkill4;
+            public Boolean skillActive4;
+
+            public string primarySkill5;
+            public string secondarySkill5;
+            public Boolean skillActive5;
+
+            [StaticCount(36)]
+            public List<HotSlot> hotSlots = new List<HotSlot>();
+
+            public float cameraDistance;
+        }
+
         // Builds a flattened "ordered" list of field names given a type.
         //
         // For some reason, when you ask for a list of fields for a class, the fields come in "reverse hiearchy order".
@@ -742,8 +809,19 @@ namespace GDSaveEditor
                     {
                         // Read in a single item
                         dynamic item;
+
+                        // If it's a basic type, try to read it
                         if (basicType)
                             item = Read_Basic_Type(itemType, s, encrypter);
+
+                        // If the thing to be create has an attached static "Read" method, invoke it
+                        else if (itemType.GetMethod("Read") != null && itemType.GetMethod("Read").IsStatic)
+                        {
+                            MethodInfo info = itemType.GetMethod("Read");
+                            item = info.Invoke(null, new object[] { s, encrypter });
+                        }
+
+                        // Otherwise, maybe we can recurively create the structure
                         else
                             item = readStructure(itemType, s, encrypter);
                         list.Add(item);
@@ -863,6 +941,7 @@ namespace GDSaveEditor
             Block8 block8 = (Block8)readBlock(8, typeof(Block8), fs, enc);
             Block12 block12 = (Block12)readBlock(12, typeof(Block12), fs, enc);
             Block13 block13 = (Block13)readBlock(13, typeof(Block13), fs, enc);
+            Block14 block14 = (Block14)readBlock(14, typeof(Block14), fs, enc);
             return;
         }
 
