@@ -53,6 +53,7 @@ namespace GDSaveEditor
     {
         public static List<ActionItem> activeActionMap;
         public static string activeCharacterFile;
+        public static Dictionary<string, object> character;
     }
 
     class Program
@@ -86,9 +87,19 @@ namespace GDSaveEditor
         {
             Console.WriteLine("File: {0}", Globals.activeCharacterFile);
 
+            // If we haven't loaded the character yet, auto load it now
+            if(Globals.character == null && Globals.activeCharacterFile != null)
+                Globals.character = loadCharacterFile(Path.Combine(Globals.activeCharacterFile, "player.gdc"));
+
             var actionMap = new List<ActionItem>
             {
-                new ActionItem("r", "Reload", () => { loadCharacterFile(Path.Combine(Globals.activeCharacterFile, "player.gdc")); })
+                new ActionItem("r", "Reload", () => {
+                    Globals.character = loadCharacterFile(Path.Combine(Globals.activeCharacterFile, "player.gdc"));
+                }),
+                new ActionItem("w", "Write", () => {
+                    string saveDir = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+                    writeCharacterFile(Path.Combine(saveDir, "player.gdc"), Globals.character);
+                })
             };
 
             Globals.activeActionMap = actionMap;
@@ -160,14 +171,46 @@ namespace GDSaveEditor
             return data;
         }
 
+        private static void Write_Bytes(Stream s, Encrypter encrypter, byte[] dataIn)
+        {
+            // Make a copy of the data
+            // We're going to be mutate/encrypt the entire array before writing it out
+            byte[] data = new byte[dataIn.Length];
+            dataIn.CopyTo(data, 0);
+
+            if (encrypter != null)
+            {
+                for (int i = 0; i < data.Length; i++)
+                {
+                    byte encryptedVal = (byte)(data[i] ^ (byte)encrypter.state);
+                    encrypter.updateState(encryptedVal);
+                    data[i] = encryptedVal;
+                }
+            }
+
+            s.Write(data, 0, data.Length);
+        }
+
         private static byte Read_Byte(Stream s, Encrypter encrypter)
         {
             return Read_Bytes(s, encrypter, 1)[0];
         }
 
+        private static void Write_Byte(Stream s, Encrypter encrypter, byte data)
+        {
+            // FIXME!!! This seems extremely wasteful
+            byte[] array = new byte[1] { data };
+            Write_Bytes(s, encrypter, array);
+        }
+
         private static bool Read_Bool(Stream s, Encrypter encrypter)
         {
             return Read_Byte(s, encrypter) == 1;
+        }
+
+        private static void Write_Bool(Stream s, Encrypter encrypter, bool data)
+        {
+            Write_Byte(s, encrypter, data ? (byte)1 : (byte)0);
         }
 
         // Read a 4 byte value
@@ -183,9 +226,32 @@ namespace GDSaveEditor
             return val;
         }
 
+        private static void Write_UInt32(Stream s, Encrypter encrypter, UInt32 data)
+        {
+            UInt32 val = data;
+
+            // Encrypt the value is an encrypter is given
+            if (encrypter != null) {
+                val = val ^ encrypter.state;
+                encrypter.updateState(BitConverter.GetBytes(val));
+            }
+
+            s.Write(BitConverter.GetBytes(val), 0, 4);
+        }
+
         private static float Read_Float(Stream s, Encrypter encrypter)
         {
             return BitConverter.ToSingle(BitConverter.GetBytes(Read_UInt32(s, encrypter)), 0);
+        }
+
+        private static void Write_Float(Stream s, Encrypter encrypter, float data)
+        {
+            // We want to interpret the float as a 4 byte quantity and write it via Write_UInt32.
+            // Perhaps a better name for the function is "Write_4bytes".
+            // This cannot be replaced with "Write_Bytes" because the encrypter state is used
+            // differently. Write_Bytes uses a single byte out of the state and discards the rest 3 
+            // bytes. Write_UInt32 uses the entire 4 bytes.
+            Write_UInt32(s, encrypter, BitConverter.ToUInt32(BitConverter.GetBytes(data), 0));
         }
 
         private static string Read_String(Stream s, Encrypter encrypter)
@@ -200,6 +266,15 @@ namespace GDSaveEditor
             return Encoding.ASCII.GetString(data);
         }
 
+        private static void Write_String(Stream s, Encrypter encrypter, string data)
+        {
+            Write_UInt32(s, encrypter, (uint)data.Length);
+            if (data.Length == 0)
+                return;
+
+            Write_Bytes(s, encrypter, Encoding.ASCII.GetBytes(data));
+        }
+
         private static string Read_WString(Stream s, Encrypter encrypter)
         {
             uint length = Read_UInt32(s, encrypter);
@@ -210,6 +285,15 @@ namespace GDSaveEditor
 
             byte[] data = Read_Bytes(s, encrypter, (int)length * 2);
             return Encoding.Unicode.GetString(data);
+        }
+
+        private static void Write_WString(Stream s, Encrypter encrypter, string data)
+        {
+            Write_UInt32(s, encrypter, (uint)data.Length);
+            if (data.Length == 0)
+                return;
+
+            Write_Bytes(s, encrypter, Encoding.Unicode.GetBytes(data));
         }
 
         class Encrypter
@@ -273,7 +357,7 @@ namespace GDSaveEditor
             public Boolean male;
             public string playerClassName;
             public UInt32 characterLevel;
-            public bool hardcoreMode;
+            public Boolean hardcoreMode;
         }
 
         class Block1
@@ -797,7 +881,7 @@ namespace GDSaveEditor
         static Object readStructure(Type type, Stream s, Encrypter encrypter) {
             // Create an instance of the object to be filled with data
             Object instance = Activator.CreateInstance(type);
-            Console.WriteLine("Serializing {0}", type);
+            //Console.WriteLine("Serializing {0}", type);
 
             var fieldInfos = buildOrderedFieldList(type);
             foreach (var field in fieldInfos)
@@ -867,7 +951,117 @@ namespace GDSaveEditor
                     else
                         itemCount = (int)Read_UInt32(s, encrypter);
 
-                    Console.WriteLine("Substructure: {0}, count = {1}", itemType, itemCount);
+                    //Console.WriteLine("Substructure: {0}, count = {1}", itemType, itemCount);
+
+                    // Where are we storing the items?
+                    dynamic list = field.GetValue(instance);
+
+                    // How will we read the item?
+                    // We read in basic types differently than "complex" or "compound" types
+                    bool basicType = isBasicType(itemType);
+
+                    // Start reading
+                    for(int i = 0; i < itemCount; i++)
+                    {
+                        // Read in a single item
+                        dynamic item;
+
+                        // If it's a basic type, try to read it
+                        if (basicType)
+                            item = Read_Basic_Type(itemType, s, encrypter);
+
+                        // If the thing to be create has an attached static "Read" method, invoke it
+                        else if (itemType.GetMethod("Read") != null && itemType.GetMethod("Read").IsStatic)
+                        {
+                            MethodInfo info = itemType.GetMethod("Read");
+                            item = info.Invoke(null, new object[] { s, encrypter });
+                        }
+
+                        // Otherwise, maybe we can recurively create the structure
+                        else
+                            item = readStructure(itemType, s, encrypter);
+                        list.Add(item);
+                    }
+                }
+                else 
+                    throw new Exception("I don't know how to handle this type of field!");
+
+            }
+
+            return instance;
+        }
+
+        static Object writeStructure(object instance, Stream s, Encrypter encrypter) {
+            // Create an instance of the object to be filled with data
+            Console.WriteLine("Serializing {0}", instance.GetType());
+
+            var fieldInfos = buildOrderedFieldList(instance.GetType());
+            foreach (var field in fieldInfos)
+            {
+                if(field.FieldType == typeof(string))
+                {
+                    // Determine the encoding we want to use to read the data
+                    // Default to reading everything as ascii
+                    Type encoding = typeof(ASCIIEncoding);
+
+                    // Some items should be read as UTF-16. 
+                    // Those fields will be have a custom attribute on them to override the default.
+                    OnDiskEncoding spec = (OnDiskEncoding)field.GetCustomAttribute(typeof(OnDiskEncoding));
+                    if (spec != null)
+                        encoding = spec.encoding;
+
+                    // Read the string
+                    // NOTE: We're using the .NET encoding types as some sort of enum to get the compiler to
+                    // help us not enter gibberish as the encoding.
+                    string value = (string)field.GetValue(instance);
+                    if (encoding == typeof(ASCIIEncoding))
+                        Write_String(s, encrypter, value);
+                    else if (encoding == typeof(UnicodeEncoding))
+                        Write_WString(s, encrypter, value);
+                    else
+                        throw new Exception("Bad structure declaration!");
+                }
+                else if (field.FieldType == typeof(bool))
+                {
+                    Write_Bool(s, encrypter, (bool)field.GetValue(instance));
+                }
+                else if (field.FieldType == typeof(uint))
+                {
+                    Write_UInt32(s, encrypter, (UInt32)field.GetValue(instance));
+                }
+                else if (field.FieldType == typeof(byte))
+                {
+                    Write_Byte(s, encrypter, (byte)field.GetValue(instance));
+                }
+                else if (field.FieldType == typeof(float))
+                {
+                    Write_Float(s, encrypter, (float)field.GetValue(instance));
+                }
+                else if (field.FieldType == typeof(byte[]))
+                {
+                    // Looks like we're expecting a byte array
+                    byte[] array = (byte[])field.GetValue(instance);
+
+                    // Read in the exact size we're expecting
+                    array = Read_Bytes(s, encrypter, array.Length);
+
+                    // Place the newly read data back into the field location
+                    field.SetValue(instance, array);
+                }
+                else if (field.FieldType.IsGenericType && field.FieldType.GetGenericTypeDefinition() == typeof(List<>))
+                {
+                    // What kind of items do we want to read?
+                    Type itemType = field.FieldType.GetGenericArguments()[0];
+
+                    // How many of them are there?
+                    int itemCount = 0;
+                    StaticCount count = (StaticCount)field.GetCustomAttribute(typeof(StaticCount));
+                    if (count != null)
+                        itemCount = count.count;
+                    else
+                        itemCount = (int)Read_UInt32(s, encrypter);
+
+                    //Console.WriteLine("Substructure: {0}, count = {1}", itemType, itemCount);
 
                     // Where are we storing the items?
                     dynamic list = field.GetValue(instance);
@@ -1003,10 +1197,18 @@ namespace GDSaveEditor
             return blockInstance;
         }
 
+        class LoadFileInfo
+        {
+            public UInt32 seed;
+            public UInt32 headerVersion;
+            public UInt32 dataVersion;
+            public byte[] mysteryField;
+        }
 
         static Dictionary<string, object> loadCharacterFile(string filepath)
         {
             List<object> blockList = new List<object>();
+            var loadInfo = new LoadFileInfo();
 
             // Read through all blocks and collect them into the block list
             using (FileStream fs = new FileStream(filepath, FileMode.Open, FileAccess.Read))
@@ -1023,7 +1225,9 @@ namespace GDSaveEditor
                 //  Header version - 4 bytes (must be 1)
 
                 // Read and seed the encrytpion table
-                Encrypter enc = new Encrypter(reader.ReadUInt32() ^ 1431655765U);
+                UInt32 seed = reader.ReadUInt32() ^ 1431655765U;
+                Encrypter enc = new Encrypter(seed);
+                loadInfo.seed = seed;
 
                 // Try to read the file marker ("GDCX")
                 if (Read_UInt32(fs, enc) != 0x58434447)
@@ -1032,6 +1236,7 @@ namespace GDSaveEditor
                 uint headerVersion = Read_UInt32(fs, enc);
                 if (headerVersion != 1)
                     throw new Exception(String.Format("Incorrect header version!  Unknown version {0}", headerVersion));
+                loadInfo.headerVersion = headerVersion;
 
                 Header header = (Header)readStructure(typeof(Header), fs, enc);
                 blockList.Add(header);
@@ -1043,8 +1248,10 @@ namespace GDSaveEditor
                 uint dataVersion = Read_UInt32(fs, enc);
                 if (dataVersion != 6 && dataVersion != 7)
                     throw new Exception(String.Format("Incorrect data version!  Unknown version {0}.", dataVersion));
+                loadInfo.dataVersion = dataVersion;
 
                 byte[] mysteryField = Read_Bytes(fs, enc, 16);
+                loadInfo.mysteryField = mysteryField;
 
 
                 // TODO!!! It might be a good idea to peak at the file to determine type of the next block to be read
@@ -1092,13 +1299,36 @@ namespace GDSaveEditor
                 mergeStructureIntoDictionary(character, block);
             }
 
-            // Hold on to the block list.
+            // Hold on to the block list and other misc infomration.
             // We're likely to need this when we serialize the character out to a file again.
-            character["blockList"] = blockList;
+            character["meta-blockList"] = blockList;
+            character["meta-loadInfo"] = loadInfo;
 
             return character;
         }
 
+        static bool writeCharacterFile(string filepath, Dictionary<string, dynamic> character)
+        {
+            // Open given file and truncate all existing content
+            using (FileStream fs = new FileStream(filepath, FileMode.Create, FileAccess.Write))
+            {
+                if (fs == null)
+                    return false;
+
+                LoadFileInfo loadInfo = character["meta-loadInfo"];
+                uint seed = loadInfo.seed;
+                fs.Write(BitConverter.GetBytes(seed ^ 1431655765U), 0, 4);
+
+                Encrypter enc = new Encrypter(seed);
+                Write_UInt32(fs, enc, 0x58434447);
+                Write_UInt32(fs, enc, loadInfo.headerVersion);
+
+                List<object> blockList = character["meta-blockList"];
+                Header header = (Header) blockList.Find(x => x.GetType() == typeof(Header));
+                writeStructure(header, fs, enc);
+            }
+            return true;
+        }
 
         // Get back a list of grim dawn save directories that appears to have a player.gdc file
         static List<string> findSaveFileDirs()
