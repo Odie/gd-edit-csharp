@@ -149,6 +149,21 @@ namespace GDSaveEditor
             }
         }
 
+        // Returns whether the command was understood and handled.
+        static bool processCommand(string input)
+        {
+            var tokens = input.Split(" ".ToCharArray());
+            var command = tokens[0].ToLower();
+
+            if (command == "exit" || command == "quit")
+            {
+                Environment.Exit(0);
+                return true;
+            }
+
+            return false;
+        }
+
         static void processInput(string input)
         {
             // Try to look up the input in the action map
@@ -163,9 +178,9 @@ namespace GDSaveEditor
                 }
             }
 
-            // Otherwise, try to deal with it as an application input
-            if (input.ToLower() == "exit" || input.ToLower() == "quit")
-                Environment.Exit(0);
+            // Otherwise, try to deal with it as an application command
+            if (processCommand(input))
+                return;
 
             // If we can't deal with it, print an error
             Console.WriteLine("Couldn't make heads or tails out of that one. Try again?");
