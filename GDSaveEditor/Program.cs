@@ -58,6 +58,24 @@ namespace GDSaveEditor
 
     class Program
     {
+        static string getNextBackupFilepath(string path)
+        {
+            var filename = Path.GetFileName(path);
+            string[] files = Directory.GetFiles(Path.GetDirectoryName(path), filename+".bak*");
+
+            string backupFilename;
+            if (files.Length == 0)
+                backupFilename = filename + ".bak";
+            else
+                backupFilename =  filename + ".bak" + files.Length;
+
+            return Path.Combine(Path.GetDirectoryName(path), backupFilename);
+        }
+
+        static string getCharacterFilepath(string characterDir)
+        {
+            return Path.Combine(Globals.activeCharacterFile, "player.gdc");
+        }
 
         static void saveFileSelectionScreen()
         {
@@ -89,17 +107,22 @@ namespace GDSaveEditor
 
             // If we haven't loaded the character yet, auto load it now
             if(Globals.character == null && Globals.activeCharacterFile != null)
-                Globals.character = loadCharacterFile(Path.Combine(Globals.activeCharacterFile, "player.gdc"));
+                Globals.character = loadCharacterFile(getCharacterFilepath(Globals.activeCharacterFile));
 
             var actionMap = new List<ActionItem>
             {
                 new ActionItem("r", "Reload", () => {
-                    Globals.character = loadCharacterFile(Path.Combine(Globals.activeCharacterFile, "player.gdc"));
+                    Globals.character = loadCharacterFile(getCharacterFilepath(Globals.activeCharacterFile));
                 }),
                 new ActionItem("w", "Write", () => {
-                    string saveDir = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-                    writeCharacterFile(Path.Combine(saveDir, "player.gdc"), Globals.character);
-                })
+                    // Make a backup of the current file
+                    var characterFilepath = getCharacterFilepath(Globals.activeCharacterFile);
+                    var backupFilepath = getNextBackupFilepath(characterFilepath);
+                    File.Move(characterFilepath, backupFilepath);
+
+                    // Write out the new character file
+                    writeCharacterFile(characterFilepath, Globals.character);
+                }),
             };
 
             Globals.activeActionMap = actionMap;
