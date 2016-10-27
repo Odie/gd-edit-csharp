@@ -131,6 +131,7 @@ namespace GDSaveEditor
                     File.Move(characterFilepath, backupFilepath);
 
                     // Write out the new character file
+                    mergeCharacterIntoBlockList(Globals.character);
                     writeCharacterFile(characterFilepath, Globals.character);
                 }),
                 new ActionItem("c", "cycle", () => {
@@ -139,6 +140,26 @@ namespace GDSaveEditor
             };
 
             Globals.activeActionMap = actionMap;
+        }
+
+        static void mergeCharacterIntoBlockList(Dictionary<string, object> character)
+        {
+            List<object> blockList = (List<object>)character["meta-blockList"];
+            foreach(var pair in character)
+            {
+                if (pair.Key.StartsWith("meta-"))
+                    continue;
+
+                // Find a block with the matching field name
+                // We should get a match of exactly one block
+                var matches = blockList.Where(b => b.GetType().GetField(pair.Key) != null);
+                if (matches.Count() != 1)
+                    throw new Exception(String.Format("Error merging field: {0}", pair.Key));
+                var block = matches.First();
+
+                // Set the value into the field
+                block.GetType().GetField(pair.Key).SetValue(block, pair.Value);
+            } 
         }
 
         // Print whatever is in the action map
@@ -277,7 +298,10 @@ namespace GDSaveEditor
 
                     var blockList = (List<object>) Globals.character["meta-blockList"];
                     var blockType = blockList
-                                        .Where(block => block.GetType().GetFields().Where(field => field.Name.ToLower() == fieldname.ToLower()).Any())
+                                        // Any block with a lowercased field name that matches the user supplied
+                                        .Where(block => block.GetType().GetFields()
+                                                            .Where(field => field.Name.ToLower() == fieldname.ToLower())
+                                                            .Any())
                                         .Select(block => block.GetType())
                                         .First();
 
