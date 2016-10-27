@@ -178,7 +178,16 @@ namespace GDSaveEditor
                 Console.ForegroundColor = ConsoleColor.White;
                 Console.Write("{0}: ", entry.Key);
                 Console.ForegroundColor = ConsoleColor.DarkGray;
-                Console.WriteLine(entry.Value);
+
+                Type valueType = entry.Value.GetType();
+                if (valueType.IsGenericType && valueType.GetGenericTypeDefinition() == typeof(List<>))
+                {
+                    dynamic list = entry.Value;
+                    Console.WriteLine("{0} item(s) of type: {1}", list.Count, valueType.GetGenericArguments()[0].Name);
+                }
+                else
+                    Console.WriteLine(entry.Value);
+
                 Console.ResetColor();
             }
 
