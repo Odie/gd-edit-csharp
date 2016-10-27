@@ -134,9 +134,6 @@ namespace GDSaveEditor
                     mergeCharacterIntoBlockList(Globals.character);
                     writeCharacterFile(characterFilepath, Globals.character);
                 }),
-                new ActionItem("c", "cycle", () => {
-                    Console.WriteLine("Doing nothing!");
-                }),
             };
 
             Globals.activeActionMap = actionMap;
