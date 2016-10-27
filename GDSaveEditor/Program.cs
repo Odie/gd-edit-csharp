@@ -257,9 +257,10 @@ namespace GDSaveEditor
                 return;
             }
 
-            if (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(Dictionary<,>))
+            if (type.IsGenericType && 
+                (type.GetGenericTypeDefinition() == typeof(Dictionary<,>) || type.GetGenericTypeDefinition().Namespace == "System.Linq"))
             {
-                printDictionary((Dictionary<string, object>)o);
+                printDictionary((IEnumerable<KeyValuePair<string, object>>)o);
                 return;
             }
 
@@ -327,17 +328,45 @@ namespace GDSaveEditor
                 {
                     var path = parameters[0].Split("/".ToCharArray());
 
-                    var walkResult = walkStructure(Globals.character, path.ToList());
+                    object target = Globals.character;
+                    Dictionary<string, object> walkResult;
+
+                    // If the path more than a single component, try walking the structure
+                    // with partial fieldname matching.
+                    // However, since we're traversing a field, we cannot allow any ambiguity in the path.
+                    // We leave out the last component to allow for multiple matches.
+                    // This way, "show" can be used to explore, filter, and navigate.
+                    if (path.Length > 1)
+                    {
+                        walkResult = walkStructure(Globals.character, path.Take(path.Length-1).ToList());
+                        if ((bool)walkResult["walkCompleted?"] == false)
+                        {
+                            Console.WriteLine("No match found");
+                            return true;
+                        }
+                        target = walkResult["target"];
+                    }
+
+                    // Grab the last component of the path
+                    // We're going to allow for multiple matches here.
+                    walkResult = walkStructure(target, path.Skip(path.Length - 1).ToList());
                     if ((bool)walkResult["walkCompleted?"] == false)
                     {
-                        Console.WriteLine("No match found");
+                        if (walkResult["terminationReason"] == "ambiguous")
+                        {
+                            printObject(walkResult["ambiguousTarget"], 1);
+                        }
+                        else
+                        {
+                            Console.WriteLine("No match found");
+                            return true;
+                        }
                         return true;
                     }
 
-                    object target = walkResult["target"];
                     if (walkResult["targetFieldname"] != null)
                         Console.WriteLine("{0}: ", walkResult["targetFieldname"]);
-                    printObject(target, 1);
+                    printObject(walkResult["target"], 1);
 
                     return true;
                 }
@@ -568,13 +597,14 @@ namespace GDSaveEditor
                     // It's ambiguous.
                     if (collection.Count() == 0)
                     {
-                        result["terminationResult"] = "no match";
+                        result["terminationReason"] = "no match";
                         break;
                     }
 
                     if(collection.Count() != 1)
                     {
-                        result["terminationResult"] = "ambiguous";
+                        result["terminationReason"] = "ambiguous";
+                        result["ambiguousTarget"] = collection;
                         break;
                     }
 
