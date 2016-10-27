@@ -169,13 +169,22 @@ namespace GDSaveEditor
             }
         }
 
-        static void showCharacterMap(IEnumerable<KeyValuePair<string, object>> character)
+        static void printDictionary(IEnumerable<KeyValuePair<string, object>> character)
         {
+            var collection = character
+                                .Where(p => !p.Key.StartsWith("meta-"))
+                                .OrderBy(pair => pair.Key);
+
+            if (collection.Count() == 0)
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine("No matches");
+                Console.ResetColor();
+                return;
+            }
+
             foreach (KeyValuePair<string, object> entry in character)
             {
-                if (entry.Key.StartsWith("meta-"))
-                    continue;
-
                 Console.ForegroundColor = ConsoleColor.White;
                 Console.Write("{0}: ", entry.Key);
                 Console.ForegroundColor = ConsoleColor.DarkGray;
@@ -194,7 +203,7 @@ namespace GDSaveEditor
 
             Console.WriteLine();
             Console.ForegroundColor = ConsoleColor.White;
-            Console.Write(character.Count());
+            Console.Write(collection.Count());
             Console.ForegroundColor = ConsoleColor.DarkGray;
             Console.WriteLine(" item(s) shown");
             Console.ResetColor();
@@ -236,6 +245,23 @@ namespace GDSaveEditor
             }
         }
 
+        static IEnumerable<KeyValuePair<string, object>> partialFieldMatch(Dictionary<string, object> dictionary, string target)
+        {
+            var collection = dictionary
+                                // Deal with partial matches
+                                .Where(pair =>
+                                    splitCamelCase(pair.Key)
+                                    .Select(word => word.ToLower())
+                                    .Any(word => word.Contains(target)))
+                                // Deal with whole matches 
+                                .Union(
+                                    Globals.character
+                                    .Where(pair => pair.Key.ToLower() == target.ToLower())
+                                    );
+
+            return collection;
+        }
+
         // Returns whether the command was understood and handled.
         static bool processCommand(string input)
         {
@@ -257,28 +283,16 @@ namespace GDSaveEditor
                 if (parameters.Length == 0)
                 {
                     // When there are no parameters, simply show the entire character map
-                    var collection = Globals.character.OrderBy(pair => pair.Key);
-                    showCharacterMap(collection);
+                    var collection = Globals.character;
+                    printDictionary(collection);
                     return true;
                 }
 
                 if (parameters.Length == 1)
                 {
                     // If we have a parameter, all items that has a word with a partial match to the parameter
-                    var collection = Globals.character
-                                        // Deal with partial matches
-                                        .Where(pair =>
-                                            splitCamelCase(pair.Key)
-                                            .Select(word => word.ToLower())
-                                            .Any(word => word.Contains(parameters[0])))
-                                        // Deal with whole matches 
-                                        .Union(
-                                            Globals.character
-                                            .Where(pair => pair.Key.ToLower() == parameters[0].ToLower())
-                                            )
-                                        .OrderBy(pair => pair.Key);
-
-                    showCharacterMap(collection);
+                    IEnumerable<KeyValuePair<string, object>> collection = partialFieldMatch(Globals.character, parameters[0]);
+                    printDictionary(collection);
                     return true;
                 }
 
@@ -538,14 +552,10 @@ namespace GDSaveEditor
 
             // Otherwise, try to deal with it as an application command
             if (processCommand(input))
-            {
-                Console.WriteLine();
                 return;
-            }
 
             // If we can't deal with it, print an error
             Console.WriteLine("Couldn't make heads or tails out of that one. Try again?");
-            Console.WriteLine();
         }
 
         static void Main(string[] args)
@@ -561,12 +571,17 @@ namespace GDSaveEditor
                 }
                 printActiveActionMap();
                 Console.WriteLine();
+                Console.ForegroundColor = ConsoleColor.Green;
                 Console.Write("> ");
+                Console.ResetColor();
 
                 var input = Console.ReadLine();
                 Console.WriteLine();
                 processInput(input);
                 Console.WriteLine();
+                Console.ForegroundColor = ConsoleColor.DarkYellow;
+                Console.WriteLine("----------");
+                Console.ResetColor();
             }
             
         }
