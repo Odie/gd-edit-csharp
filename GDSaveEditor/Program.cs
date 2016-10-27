@@ -149,16 +149,55 @@ namespace GDSaveEditor
             }
         }
 
+        static void showCharacterMap(IEnumerable<KeyValuePair<string, object>> character)
+        {
+            foreach (KeyValuePair<string, object> entry in character)
+            {
+                if (entry.Key.StartsWith("meta-"))
+                    continue;
+                Console.WriteLine("{0}: {1}", entry.Key, entry.Value);
+            }
+        }
+
         // Returns whether the command was understood and handled.
         static bool processCommand(string input)
         {
             var tokens = input.Split(" ".ToCharArray());
             var command = tokens[0].ToLower();
+            var parameters = tokens.Skip(1).ToArray();
 
             if (command == "exit" || command == "quit")
             {
                 Environment.Exit(0);
                 return true;
+            }
+
+            if (command == "show")
+            {
+                if(Globals.character == null)
+                {
+                    Console.WriteLine("No character has been loaded yet\nThere is nothing to show");
+                    return true;
+                }
+
+                if (parameters.Length == 0)
+                {
+                    // When there are no parameters, simply show the entire character map
+                    var collection = Globals.character.OrderBy(pair => pair.Key);
+                    showCharacterMap(collection);
+                    return true;
+                }
+
+                if (parameters.Length >= 1)
+                {
+                    // If we have a parameter
+                    // Show all keys that contains the second token
+                    var collection = Globals.character
+                                        .Where(pair => pair.Key.ToLower().Contains(parameters[0]))
+                                        .OrderBy(pair => pair.Key);
+                    showCharacterMap(collection);
+                    return true;
+                }
             }
 
             return false;
