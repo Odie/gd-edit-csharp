@@ -5,6 +5,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using System.Reflection;
+using System.Text.RegularExpressions;
 
 namespace GDSaveEditor
 {
@@ -155,8 +156,38 @@ namespace GDSaveEditor
             {
                 if (entry.Key.StartsWith("meta-"))
                     continue;
-                Console.WriteLine("{0}: {1}", entry.Key, entry.Value);
+
+                Console.ForegroundColor = ConsoleColor.White;
+                Console.Write("{0}: ", entry.Key);
+                Console.ForegroundColor = ConsoleColor.DarkGray;
+                Console.WriteLine(entry.Value);
+                Console.ResetColor();
             }
+
+            Console.WriteLine();
+            Console.ForegroundColor = ConsoleColor.White;
+            Console.Write(character.Count());
+            Console.ForegroundColor = ConsoleColor.DarkGray;
+            Console.WriteLine(" items shown");
+            Console.ResetColor();
+        }
+
+        static bool verifyCharacterLoaded(Dictionary<string, object> character)
+        {
+            if (character != null)
+                return true;
+
+            Console.WriteLine("No character has been loaded yet\nThere is nothing to show");
+            return false;
+        }
+
+        static string[] splitCamelCase(string input)
+        {
+            var words = Regex.Matches(input, "(^[a-z]+|[A-Z]+(?![a-z])|[A-Z][a-z]+)")
+                                .OfType<Match>()
+                                .Select(m => m.Value)
+                                .ToArray();
+            return words;
         }
 
         // Returns whether the command was understood and handled.
@@ -174,11 +205,8 @@ namespace GDSaveEditor
 
             if (command == "show")
             {
-                if(Globals.character == null)
-                {
-                    Console.WriteLine("No character has been loaded yet\nThere is nothing to show");
+                if (!verifyCharacterLoaded(Globals.character))
                     return true;
-                }
 
                 if (parameters.Length == 0)
                 {
@@ -188,16 +216,23 @@ namespace GDSaveEditor
                     return true;
                 }
 
-                if (parameters.Length >= 1)
+                if (parameters.Length == 1)
                 {
-                    // If we have a parameter
-                    // Show all keys that contains the second token
+                    // If we have a parameter, all items that has a word with a partial match to the parameter
                     var collection = Globals.character
-                                        .Where(pair => pair.Key.ToLower().Contains(parameters[0]))
+                                        .Where(pair =>
+                                            splitCamelCase(pair.Key)
+                                            .Select(word => word.ToLower())
+                                            .Any(word => word.Contains(parameters[0]))
+                                            )
                                         .OrderBy(pair => pair.Key);
+
                     showCharacterMap(collection);
                     return true;
                 }
+
+                Console.Write("Syntax: show <partial fieldname>");
+                return true;
             }
 
             return false;
@@ -219,7 +254,10 @@ namespace GDSaveEditor
 
             // Otherwise, try to deal with it as an application command
             if (processCommand(input))
+            {
+                Console.WriteLine();
                 return;
+            }
 
             // If we can't deal with it, print an error
             Console.WriteLine("Couldn't make heads or tails out of that one. Try again?");
