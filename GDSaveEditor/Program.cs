@@ -613,7 +613,7 @@ namespace GDSaveEditor
             public Boolean hasBeenInGame;
             public Byte lastDifficulty;
             public Byte greatestDifficultyCompleted;
-            public UInt32 ironMode;
+            public UInt32 iron;
             public Byte greatestSurvivalDifficultyCompleted;
             public UInt32 tributes;
             public Byte UICompassState;
