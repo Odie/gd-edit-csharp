@@ -169,9 +169,9 @@ namespace GDSaveEditor
             }
         }
 
-        static void printDictionary(IEnumerable<KeyValuePair<string, object>> character)
+        static void printDictionary(IEnumerable<KeyValuePair<string, object>> collectionIn, int indentLevel = 0)
         {
-            var collection = character
+            var collection = collectionIn
                                 .Where(p => !p.Key.StartsWith("meta-"))
                                 .OrderBy(pair => pair.Key);
 
@@ -183,8 +183,9 @@ namespace GDSaveEditor
                 return;
             }
 
-            foreach (KeyValuePair<string, object> entry in character)
+            foreach (KeyValuePair<string, object> entry in collection)
             {
+                printTabs(indentLevel);
                 Console.ForegroundColor = ConsoleColor.White;
                 Console.Write("{0}: ", entry.Key);
                 Console.ForegroundColor = ConsoleColor.DarkGray;
@@ -227,15 +228,48 @@ namespace GDSaveEditor
             return words;
         }
 
+        static void printTabs(int indentLevel)
+        {
+            for (int i = 0; i < indentLevel; i++)
+                Console.Write("\t");
+        }
+
+        static void printObject(object o, int indentLevel = 0)
+        {
+            Type type = o.GetType();
+
+            // If we have a basic type, just print it.
+            if (isBasicType(type))
+            {
+                printTabs(indentLevel);
+                Console.Write(o);
+                return;
+            }
+
+            // If we have a list, then print the contents of the list
+            if (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(List<>))
+            {
+                dynamic list = o;
+                foreach(var item in list)
+                {
+                    printObject(item, indentLevel);
+                }
+                return;
+            }
+
+            if (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(Dictionary<,>))
+            {
+                printDictionary((Dictionary<string, object>)o);
+                return;
+            }
+
+            // When we're here, we should be looking at some kind of "complex" type.
+            Debug.Assert(!type.IsGenericType);
+            printStructure(o, indentLevel);
+        }
+
         static void printStructure(object structure, int indentLevel = 0)
         {
-            if (isBasicType(structure.GetType()))
-            {
-                for (int i = 0; i < indentLevel; i++)
-                    Console.Write("\t");
-                Console.Write(structure);
-            }
-                
             var fieldInfos = buildOrderedFieldList(structure.GetType());
             foreach (var field in fieldInfos)
             {
@@ -248,6 +282,7 @@ namespace GDSaveEditor
         static IEnumerable<KeyValuePair<string, object>> partialFieldMatch(Dictionary<string, object> dictionary, string target)
         {
             var collection = dictionary
+                                .Where(p => !p.Key.StartsWith("meta-"))
                                 // Deal with partial matches
                                 .Where(pair =>
                                     splitCamelCase(pair.Key)
@@ -290,9 +325,20 @@ namespace GDSaveEditor
 
                 if (parameters.Length == 1)
                 {
-                    // If we have a parameter, all items that has a word with a partial match to the parameter
-                    IEnumerable<KeyValuePair<string, object>> collection = partialFieldMatch(Globals.character, parameters[0]);
-                    printDictionary(collection);
+                    var path = parameters[0].Split("/".ToCharArray());
+
+                    var walkResult = walkStructure(Globals.character, path.ToList());
+                    if ((bool)walkResult["walkCompleted?"] == false)
+                    {
+                        Console.WriteLine("No match found");
+                        return true;
+                    }
+
+                    object target = walkResult["target"];
+                    if (walkResult["targetFieldname"] != null)
+                        Console.WriteLine("{0}: ", walkResult["targetFieldname"]);
+                    printObject(target, 1);
+
                     return true;
                 }
 
@@ -455,7 +501,7 @@ namespace GDSaveEditor
                             return true;
 
                         var walkResult = walkStructure(list, parameters.Skip(1).ToList());
-                        if(!walkResult["walkCompleted"])
+                        if(!walkResult["walkCompleted?"])
                         {
                             Console.WriteLine("Sorry, I couldn't find what you asked for");
                         }
@@ -482,7 +528,9 @@ namespace GDSaveEditor
         {
             dynamic targetParent = null;
             dynamic target = structure;
-            FieldInfo lastTargetField = null;
+            string lastTargetFieldname = null;
+            var result = new Dictionary<string, object>();
+
             int i;
             for(i = 0; i < path.Count; i++)
             {
@@ -503,10 +551,37 @@ namespace GDSaveEditor
                     if (isNumeric && index < target.Count) {
                         targetParent = target;
                         target = target[i];
-                        lastTargetField = null;
+                        lastTargetFieldname = null;
                         continue;
                     }
                     break;
+                }
+
+                // If we're looking at a dictionary...
+                if (targetType.IsGenericType && targetType.GetGenericTypeDefinition() == typeof(Dictionary<,>) && targetType.GetGenericArguments()[0] == typeof(string))
+                {
+                    // Try to perform a partial match on the current path item
+                    IEnumerable<KeyValuePair<string, object>> collection = partialFieldMatch(target, pathItem);
+
+                    // Make sure we're only dealing with one result
+                    // If we have more than one result, that means the given path specifies more than one item.
+                    // It's ambiguous.
+                    if (collection.Count() == 0)
+                    {
+                        result["terminationResult"] = "no match";
+                        break;
+                    }
+
+                    if(collection.Count() != 1)
+                    {
+                        result["terminationResult"] = "ambiguous";
+                        break;
+                    }
+
+                    targetParent = target;
+                    lastTargetFieldname = collection.First().Key;
+                    target = collection.First().Value;
+                    continue;
                 }
 
                 // We're looking at some other kinds of complex type
@@ -522,18 +597,18 @@ namespace GDSaveEditor
 
                 // If we're here, that means we've reached a valid field.
                 // We can continue our traversal
-                lastTargetField = targetField;
+                lastTargetFieldname = targetField.Name;
                 target = targetField.GetValue(target);
             }
 
-            return new Dictionary<string, object> {
-                {"walkCompleted", i == path.Count},
-                {"pathTraversed", path.Take(i).ToList()},
-                {"pathRemaining", path.Skip(i).ToList()},
-                {"targetParent", targetParent},
-                {"target", target},
-                {"targetFieldInfo", lastTargetField},
-            };
+            result["walkCompleted?"] = (i == path.Count);
+            result["pathTraversed"]= path.Take(i).ToList();
+            result["pathRemaining"] = path.Skip(i).ToList();
+            result["targetParent"] = targetParent;
+            result["target"] = target;
+            result["targetFieldname"] = lastTargetFieldname;
+
+            return result;
         }
 
         static void processInput(string input)
