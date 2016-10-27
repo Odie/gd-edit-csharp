@@ -6,6 +6,7 @@ using System.Text;
 using System.Threading.Tasks;
 using System.Reflection;
 using System.Text.RegularExpressions;
+using System.Diagnostics;
 
 namespace GDSaveEditor
 {
@@ -217,6 +218,24 @@ namespace GDSaveEditor
             return words;
         }
 
+        static void printStructure(object structure, int indentLevel = 0)
+        {
+            if (isBasicType(structure.GetType()))
+            {
+                for (int i = 0; i < indentLevel; i++)
+                    Console.Write("\t");
+                Console.Write(structure);
+            }
+                
+            var fieldInfos = buildOrderedFieldList(structure.GetType());
+            foreach (var field in fieldInfos)
+            {
+                for (int i = 0; i < indentLevel; i++)
+                    Console.Write("\t");
+                Console.WriteLine("{0}: {1}", field.Name, field.GetValue(structure));
+            }
+        }
+
         // Returns whether the command was understood and handled.
         static bool processCommand(string input)
         {
@@ -348,7 +367,159 @@ namespace GDSaveEditor
                 return true;
 
             }
+
+            if(command == "showlist")
+            {
+                if (!verifyCharacterLoaded(Globals.character))
+                    return true;
+
+                if (parameters.Length == 1)
+                {
+                    // If we have a parameter, all items that has a word with a partial match to the parameter
+                    var collection = Globals.character
+                                        .Where(pair => pair.Value.GetType().IsGenericType && pair.Value.GetType().GetGenericTypeDefinition() == typeof(List<>))
+                                        // Deal with partial matches
+                                        .Where(pair =>
+                                            splitCamelCase(pair.Key)
+                                            .Select(word => word.ToLower())
+                                            .Any(word => word.Contains(parameters[0])))
+                                        // Deal with whole matches 
+                                        .Union(
+                                            Globals.character
+                                            .Where(pair => pair.Key.ToLower() == parameters[0].ToLower())
+                                            )
+                                        .OrderBy(pair => pair.Key);
+
+                    // For each of the lists we retrieved...
+                    foreach(var pair in collection)
+                    {
+                        dynamic list = pair.Value;
+
+                        Console.WriteLine("Showing: {0}, {1} item(s)", pair.Key, list.Count);
+                        Console.WriteLine();
+                        if (list.Count == 0)
+                            continue;
+
+                        // Print each of the items 
+                        for(int i = 0; i < list.Count; i++)
+                        {
+                            Console.WriteLine("Item {0}:", i);
+                            printStructure(list[i], 1);
+                            Console.WriteLine();
+                        }
+                    }
+                    return true;
+                }
+
+                if (parameters.Length > 1)
+                {
+                    // If we have a parameter, all items that has a word with a partial match to the parameter
+                    var collection = Globals.character
+                                        .Where(pair => pair.Value.GetType().IsGenericType && pair.Value.GetType().GetGenericTypeDefinition() == typeof(List<>))
+                                        // Deal with partial matches
+                                        .Where(pair =>
+                                            splitCamelCase(pair.Key)
+                                            .Select(word => word.ToLower())
+                                            .Any(word => word.Contains(parameters[0])))
+                                        // Deal with whole matches 
+                                        .Union(
+                                            Globals.character
+                                            .Where(pair => pair.Key.ToLower() == parameters[0].ToLower())
+                                            )
+                                        .OrderBy(pair => pair.Key);
+
+                    if (collection.Count() != 1)
+                        Console.Write("The partial term targeted more than one list! Please try again.");
+
+                    {
+                        var pair = collection.First();
+                        dynamic list = pair.Value;
+
+                        Console.WriteLine("Using list: {0}", pair.Key);
+                        Console.WriteLine();
+                        if (list.Count == 0)
+                            return true;
+
+                        var walkResult = walkStructure(list, parameters.Skip(1).ToList());
+                        if(!walkResult["walkCompleted"])
+                        {
+                            Console.WriteLine("Sorry, I couldn't find what you asked for");
+                        }
+
+                        object target = walkResult["target"];
+                        FieldInfo fieldInfo = walkResult["targetFieldInfo"];
+                        if (fieldInfo != null)
+                            Console.Write("{0}: {1}", fieldInfo.Name, target);
+                        else
+                            printStructure(target, 1);
+
+                        return true;
+                    }
+                }
+
+                Console.Write("Syntax: showlist <partial listname>\n\tshowlist <partial listname> <partial fieldname> <partial field value>");
+                return true;
+            }
             return false;
+        }
+
+        // Given some data structure and a path, we try to traverse as much of the path as possible.
+        static Dictionary<string, object> walkStructure(object structure, List<string> path)
+        {
+            dynamic targetParent = null;
+            dynamic target = structure;
+            FieldInfo lastTargetField = null;
+            int i;
+            for(i = 0; i < path.Count; i++)
+            {
+                var pathItem = path[i];
+                Type targetType = target.GetType();
+
+                // If we're looking at a basic type, there is no way to further navigate into the data
+                // heiarchy.
+                if (isBasicType(targetType))
+                    break;
+
+                // If we're looking at a list, try to parse the path item as an index and navigate to the
+                // specified item.
+                if (targetType.IsGenericType && targetType.GetGenericTypeDefinition() == typeof(List<>))
+                {
+                    int index;
+                    bool isNumeric = int.TryParse(pathItem, out index);
+                    if (isNumeric && index < target.Count) {
+                        targetParent = target;
+                        target = target[i];
+                        lastTargetField = null;
+                        continue;
+                    }
+                    break;
+                }
+
+                // We're looking at some other kinds of complex type
+                // It's also possible that there is some other type of generics data structure along the path.
+                // We don't want to deal with those ATM.
+                Debug.Assert(!targetType.IsGenericType);
+
+                // Can we find a field in the structure to navigate to?
+                // If not, we're done traversing the path
+                var targetField = targetType.GetField(pathItem);
+                if (targetField == null)
+                    break;
+
+                // If we're here, that means we've reached a valid field.
+                // We can continue our traversal
+                lastTargetField = targetField;
+                target = targetField.GetValue(target);
+            }
+
+            return new Dictionary<string, object> {
+                {"walkCompleted", i == path.Count},
+                {"pathTraversed", path.Take(i).ToList()},
+                {"pathRemaining", path.Skip(i).ToList()},
+                {"targetParent", targetParent},
+                {"target", target},
+                {"targetFieldInfo", lastTargetField},
+            };
         }
 
         static void processInput(string input)
