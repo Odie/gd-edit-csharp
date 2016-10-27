@@ -168,7 +168,7 @@ namespace GDSaveEditor
             Console.ForegroundColor = ConsoleColor.White;
             Console.Write(character.Count());
             Console.ForegroundColor = ConsoleColor.DarkGray;
-            Console.WriteLine(" items shown");
+            Console.WriteLine(" item(s) shown");
             Console.ResetColor();
         }
 
@@ -220,10 +220,15 @@ namespace GDSaveEditor
                 {
                     // If we have a parameter, all items that has a word with a partial match to the parameter
                     var collection = Globals.character
+                                        // Deal with partial matches
                                         .Where(pair =>
                                             splitCamelCase(pair.Key)
                                             .Select(word => word.ToLower())
-                                            .Any(word => word.Contains(parameters[0]))
+                                            .Any(word => word.Contains(parameters[0])))
+                                        // Deal with whole matches 
+                                        .Union(
+                                            Globals.character
+                                            .Where(pair => pair.Key.ToLower() == parameters[0].ToLower())
                                             )
                                         .OrderBy(pair => pair.Key);
 
@@ -235,6 +240,84 @@ namespace GDSaveEditor
                 return true;
             }
 
+            if (command == "set")
+            {
+                if (!verifyCharacterLoaded(Globals.character))
+                    return true;
+
+                if (parameters.Length == 2)
+                {
+                    var match = Globals.character
+                                   .Where(pair => pair.Key.ToLower() == parameters[0].ToLower());
+                    if(match == null || match.Count() == 0)
+                    {
+                        Console.WriteLine("No match found for: {0}", parameters[0]);
+                        return true;
+                    }
+                    if(match.Count() > 1)
+                    {
+                        // This might happen if there are two keys where the lowercase are equal.
+                        // Example: bossKill and bosSkill
+                        // This is very unlikely to actually happen.
+                        // But just in case, we'll throw in a check here so we know if/when it happens.
+                        // No additional handling for now because it SHOULDN'T HAPPEN!
+                        Console.WriteLine("There was more than one matched result:");
+                        foreach(var item in match)
+                        {
+                            Console.WriteLine("\t{0}", item.Key);
+                        }
+                        return true;
+                    }
+
+                    // If we're here, the match count should be exactly 1.
+                    // So we can try to set the field to something now.
+
+                    // First, check if we can coerce the new value to the correct type of the field.
+                    var fieldname = match.First().Key;
+
+                    var blockList = (List<object>) Globals.character["meta-blockList"];
+                    var blockType = blockList
+                                        .Where(block => block.GetType().GetFields().Where(field => field.Name.ToLower() == fieldname.ToLower()).Any())
+                                        .Select(block => block.GetType())
+                                        .First();
+
+                    // What happens if we could not find a block with a matching fieldname?
+                    // This should never happen. Every field in the character sheet is taken from a block somewhere.
+                    // But in case it happens, here's what to show the user.
+                    if(blockType == null)
+                    {
+                        Console.WriteLine("Could not find the type of field: {0}", fieldname);
+                        return true;
+                    }
+
+                    var fieldType = blockType.GetField(fieldname).FieldType;
+
+
+                    // Now that we know what the field type is, we can try to coerce the user input into the correct type
+                    dynamic val;
+                    if (fieldType == typeof(uint))
+                        val = Convert.ToUInt32(parameters[1]);
+                    else if (fieldType == typeof(float))
+                        val = Convert.ToSingle(parameters[1]);
+                    else if (fieldType == typeof(bool))
+                        val = Convert.ToBoolean(parameters[1]);
+                    else if (fieldType == typeof(byte))
+                        val = Convert.ToByte(parameters[1]);
+                    else
+                        // If it's not any of the other types, just treat it as a string
+                        val = parameters[1];
+
+                    Globals.character[match.First().Key] = val;
+
+                    Console.WriteLine("Updated value:");
+                    processCommand("show " + fieldname);
+                    return true;
+                }
+
+                Console.Write("Syntax: set <fieldname> <new value>");
+                return true;
+
+            }
             return false;
         }
 
