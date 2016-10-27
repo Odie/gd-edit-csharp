@@ -250,8 +250,10 @@ namespace GDSaveEditor
             if (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(List<>))
             {
                 dynamic list = o;
-                foreach(var item in list)
+                for(int i = 0; i < list.Count; i++)
                 {
+                    var item = list[i];
+                    Console.WriteLine("{0}: ", i);
                     printObject(item, indentLevel);
                 }
                 return;
@@ -284,16 +286,8 @@ namespace GDSaveEditor
         {
             var collection = dictionary
                                 .Where(p => !p.Key.StartsWith("meta-"))
-                                // Deal with partial matches
                                 .Where(pair =>
-                                    splitCamelCase(pair.Key)
-                                    .Select(word => word.ToLower())
-                                    .Any(word => word.Contains(target)))
-                                // Deal with whole matches 
-                                .Union(
-                                    Globals.character
-                                    .Where(pair => pair.Key.ToLower() == target.ToLower())
-                                    );
+                                    pair.Key.ToLower().Contains(target));
 
             return collection;
         }
@@ -326,7 +320,8 @@ namespace GDSaveEditor
 
                 if (parameters.Length == 1)
                 {
-                    var path = parameters[0].Split("/".ToCharArray());
+                    var sep = "/".ToCharArray();
+                    var path = parameters[0].TrimEnd(sep).Split(sep);
 
                     object target = Globals.character;
                     Dictionary<string, object> walkResult;
@@ -580,7 +575,7 @@ namespace GDSaveEditor
                     if (isNumeric && index < target.Count) {
                         targetParent = target;
                         target = target[i];
-                        lastTargetFieldname = null;
+                        lastTargetFieldname = pathItem;
                         continue;
                     }
                     break;
@@ -618,17 +613,29 @@ namespace GDSaveEditor
                 // It's also possible that there is some other type of generics data structure along the path.
                 // We don't want to deal with those ATM.
                 Debug.Assert(!targetType.IsGenericType);
+                {
+                    // Can we find a field in the structure to navigate to?
+                    // If not, we're done traversing the path
+                    var collection = targetType.GetFields().Where(fieldInfo =>
+                                                            fieldInfo.Name.ToLower().Contains(pathItem));
+                    if (collection.Count() == 0)
+                    {
+                        result["terminationReason"] = "no match";
+                        break;
+                    }
 
-                // Can we find a field in the structure to navigate to?
-                // If not, we're done traversing the path
-                var targetField = targetType.GetField(pathItem);
-                if (targetField == null)
-                    break;
+                    if(collection.Count() != 1)
+                    {
+                        result["terminationReason"] = "ambiguous";
+                        result["ambiguousTarget"] = collection;
+                        break;
+                    }
 
-                // If we're here, that means we've reached a valid field.
-                // We can continue our traversal
-                lastTargetFieldname = targetField.Name;
-                target = targetField.GetValue(target);
+                    FieldInfo targetField = collection.First();
+                    targetParent = target;
+                    lastTargetFieldname = targetField.Name;
+                    target = targetField.GetValue(target);
+                }
             }
 
             result["walkCompleted?"] = (i == path.Count);
