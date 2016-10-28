@@ -292,6 +292,41 @@ namespace GDSaveEditor
             return collection;
         }
 
+        static bool isDictionaryWithStringKeys(object obj)
+        {
+            Type type = obj.GetType();
+            if (type.IsGenericType && 
+                type.GetGenericTypeDefinition() == typeof(Dictionary<,>) && 
+                type.GetGenericArguments()[0] == typeof(string))
+                return true;
+
+            return false;
+        }
+        // Sets a field on the given object regardless of wether it's a dictionary of some other complex type
+        static void setField(object obj, string fieldname, object val)
+        {
+            Type type = obj.GetType();
+
+            // Are we looking at a dictionary?
+            if (isDictionaryWithStringKeys(obj))
+            {
+                dynamic dictionary = obj;
+                dictionary[fieldname] = val;
+                return;
+            }
+
+            // We're not going to deal with any other types of generic containers
+            Debug.Assert(!type.IsGenericType);
+
+            // Grab the field info and set the field to the new value
+            FieldInfo fieldInfo = type.GetField(fieldname);
+            if (fieldInfo == null)
+                throw new MissingFieldException();
+
+            fieldInfo.SetValue(obj, val);
+        }
+
+
         // Returns whether the command was understood and handled.
         static bool processCommand(string input)
         {
@@ -377,54 +412,36 @@ namespace GDSaveEditor
 
                 if (parameters.Length == 2)
                 {
-                    var match = Globals.character
-                                   .Where(pair => pair.Key.ToLower() == parameters[0].ToLower());
-                    if(match == null || match.Count() == 0)
+                    var sep = "/".ToCharArray();
+                    var path = parameters[0].TrimEnd(sep).Split(sep);
+
+                    // If the path more than a single component, try walking the structure
+                    // with partial fieldname matching.
+                    // However, since we're traversing a field, we cannot allow any ambiguity in the path.
+                    // We leave out the last component to allow for multiple matches.
+                    // This way, "show" can be used to explore, filter, and navigate.
+                    Dictionary<string, object> walkResult;
+                    walkResult = walkStructure(Globals.character, path.ToList());
+                    if ((bool)walkResult["walkCompleted?"] == false)
                     {
-                        Console.WriteLine("No match found for: {0}", parameters[0]);
+                        if ((string)walkResult["terminationReason"] == "ambiguous")
+                                Console.Write("The path specifies more than one item");
+                            else
+                                Console.Write("No match found for: {0}", parameters[0]);
                         return true;
                     }
-                    if(match.Count() > 1)
-                    {
-                        // This might happen if there are two keys where the lowercase are equal.
-                        // Example: bossKill and bosSkill
-                        // This is very unlikely to actually happen.
-                        // But just in case, we'll throw in a check here so we know if/when it happens.
-                        // No additional handling for now because it SHOULDN'T HAPPEN!
-                        Console.WriteLine("There was more than one matched result:");
-                        foreach(var item in match)
-                        {
-                            Console.WriteLine("\t{0}", item.Key);
-                        }
-                        return true;
-                    }
+
+                    object targetParent = walkResult["targetParent"];
+                    string fieldname = (string)walkResult["targetFieldname"];
+                    object target = walkResult["target"];
 
                     // If we're here, the match count should be exactly 1.
                     // So we can try to set the field to something now.
-
                     // First, check if we can coerce the new value to the correct type of the field.
-                    var fieldname = match.First().Key;
 
-                    var blockList = (List<object>) Globals.character["meta-blockList"];
-                    var blockType = blockList
-                                        // Any block with a lowercased field name that matches the user supplied
-                                        .Where(block => block.GetType().GetFields()
-                                                            .Where(field => field.Name.ToLower() == fieldname.ToLower())
-                                                            .Any())
-                                        .Select(block => block.GetType())
-                                        .First();
-
-                    // What happens if we could not find a block with a matching fieldname?
-                    // This should never happen. Every field in the character sheet is taken from a block somewhere.
-                    // But in case it happens, here's what to show the user.
-                    if(blockType == null)
-                    {
-                        Console.WriteLine("Could not find the type of field: {0}", fieldname);
-                        return true;
-                    }
-
-                    var fieldType = blockType.GetField(fieldname).FieldType;
-
+                    // FIXME!!! Getting the target parent field type this way only deals with complex types
+                    // If we ever have a dictionary in the middle of the data hiearchy somewhere, this will break!
+                    var fieldType = targetParent.GetType().GetField(fieldname).FieldType;
 
                     // Now that we know what the field type is, we can try to coerce the user input into the correct type
                     dynamic val;
@@ -440,10 +457,10 @@ namespace GDSaveEditor
                         // If it's not any of the other types, just treat it as a string
                         val = parameters[1];
 
-                    Globals.character[match.First().Key] = val;
+                    setField(targetParent, fieldname, val);
 
                     Console.WriteLine("Updated value:");
-                    processCommand("show " + fieldname);
+                    processCommand("show " + parameters[0]);
                     return true;
                 }
 
@@ -452,98 +469,6 @@ namespace GDSaveEditor
 
             }
 
-            if(command == "showlist")
-            {
-                if (!verifyCharacterLoaded(Globals.character))
-                    return true;
-
-                if (parameters.Length == 1)
-                {
-                    // If we have a parameter, all items that has a word with a partial match to the parameter
-                    var collection = Globals.character
-                                        .Where(pair => pair.Value.GetType().IsGenericType && pair.Value.GetType().GetGenericTypeDefinition() == typeof(List<>))
-                                        // Deal with partial matches
-                                        .Where(pair =>
-                                            splitCamelCase(pair.Key)
-                                            .Select(word => word.ToLower())
-                                            .Any(word => word.Contains(parameters[0])))
-                                        // Deal with whole matches 
-                                        .Union(
-                                            Globals.character
-                                            .Where(pair => pair.Key.ToLower() == parameters[0].ToLower())
-                                            )
-                                        .OrderBy(pair => pair.Key);
-
-                    // For each of the lists we retrieved...
-                    foreach(var pair in collection)
-                    {
-                        dynamic list = pair.Value;
-
-                        Console.WriteLine("Showing: {0}, {1} item(s)", pair.Key, list.Count);
-                        Console.WriteLine();
-                        if (list.Count == 0)
-                            continue;
-
-                        // Print each of the items 
-                        for(int i = 0; i < list.Count; i++)
-                        {
-                            Console.WriteLine("Item {0}:", i);
-                            printStructure(list[i], 1);
-                            Console.WriteLine();
-                        }
-                    }
-                    return true;
-                }
-
-                if (parameters.Length > 1)
-                {
-                    // If we have a parameter, all items that has a word with a partial match to the parameter
-                    var collection = Globals.character
-                                        .Where(pair => pair.Value.GetType().IsGenericType && pair.Value.GetType().GetGenericTypeDefinition() == typeof(List<>))
-                                        // Deal with partial matches
-                                        .Where(pair =>
-                                            splitCamelCase(pair.Key)
-                                            .Select(word => word.ToLower())
-                                            .Any(word => word.Contains(parameters[0])))
-                                        // Deal with whole matches 
-                                        .Union(
-                                            Globals.character
-                                            .Where(pair => pair.Key.ToLower() == parameters[0].ToLower())
-                                            )
-                                        .OrderBy(pair => pair.Key);
-
-                    if (collection.Count() != 1)
-                        Console.Write("The partial term targeted more than one list! Please try again.");
-
-                    {
-                        var pair = collection.First();
-                        dynamic list = pair.Value;
-
-                        Console.WriteLine("Using list: {0}", pair.Key);
-                        Console.WriteLine();
-                        if (list.Count == 0)
-                            return true;
-
-                        var walkResult = walkStructure(list, parameters.Skip(1).ToList());
-                        if(!walkResult["walkCompleted?"])
-                        {
-                            Console.WriteLine("Sorry, I couldn't find what you asked for");
-                        }
-
-                        object target = walkResult["target"];
-                        FieldInfo fieldInfo = walkResult["targetFieldInfo"];
-                        if (fieldInfo != null)
-                            Console.Write("{0}: {1}", fieldInfo.Name, target);
-                        else
-                            printStructure(target, 1);
-
-                        return true;
-                    }
-                }
-
-                Console.Write("Syntax: showlist <partial listname>\n\tshowlist <partial listname> <partial fieldname> <partial field value>");
-                return true;
-            }
             return false;
         }
 
@@ -574,7 +499,7 @@ namespace GDSaveEditor
                     bool isNumeric = int.TryParse(pathItem, out index);
                     if (isNumeric && index < target.Count) {
                         targetParent = target;
-                        target = target[i];
+                        target = target[index];
                         lastTargetFieldname = pathItem;
                         continue;
                     }
