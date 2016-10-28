@@ -29,11 +29,9 @@ namespace GDSaveEditor
 
     class ArzReader
     {
-        List<String> stringTable;
-
-        internal static void read(string filepath)
+        internal static Dictionary<string, Dictionary<string, object>> read(string filepath)
         {
-            ArzReader arzReader = new ArzReader();
+            var db = new Dictionary<string, Dictionary<string, object>>();
 
             using (FileStream fs = new FileStream(filepath, FileMode.Open, FileAccess.Read))
             {
@@ -42,30 +40,22 @@ namespace GDSaveEditor
                     throw new Exception("I don't understand this ARZ format!");
 
                 var stringTable = readStringTable(fs, header.stringTableStart, header.stringTableStart + header.stringTableSize);
-                var recordsTable = new List<ArzRecordHeader>();
+                var recordsTable = readRecordHeadersTable(fs, header.recordTableStart, (int)header.recordTableEntries, stringTable);
 
-                fs.Seek(header.recordTableStart, SeekOrigin.Begin);
-                System.IO.BinaryReader reader = new System.IO.BinaryReader(fs);
-                for (int i = 0; i < header.recordTableEntries; i++)
+                var timer = System.Diagnostics.Stopwatch.StartNew();
+                foreach(var recordHeader in recordsTable)
                 {
-                    var recordHeader = new ArzRecordHeader();
-
-                    recordHeader.filename = stringTable[reader.ReadInt32()];
-                    var typeLength = reader.ReadInt32();
-                    recordHeader.type = Encoding.ASCII.GetString(reader.ReadBytes(typeLength));
-                    recordHeader.dataOffset = reader.ReadUInt32();
-                    recordHeader.dataCompressedSize = reader.ReadInt32();
-                    recordHeader.dataDecompressedSize = reader.ReadInt32();
-                    fs.Seek(8, SeekOrigin.Current); // There not sure what the next 8 bytes are for
-
-                    recordsTable.Add(recordHeader);
+                    var record = readRecord(fs, recordsTable[0], stringTable);
+                    db[recordHeader.filename] = record;
                 }
+                timer.Stop();
+                Console.WriteLine("{0} seconds to read the db", TimeSpan.FromMilliseconds(timer.ElapsedMilliseconds).Seconds);
 
-                var contents = read(fs, recordsTable[0], stringTable);
+                return db;
             }
         }
 
-        internal static Dictionary<string, object> read(Stream s, ArzRecordHeader recordHeader, List<string> stringTable)
+        internal static Dictionary<string, object> readRecord(Stream s, ArzRecordHeader recordHeader, List<string> stringTable)
         {
             // Prep where we're going to store the compressed bytes, taken directly from the file
             byte[] compressedBytes = new byte[recordHeader.dataCompressedSize];
@@ -115,10 +105,33 @@ namespace GDSaveEditor
                 }
             }
 
-
             return record;
         }
 
+        static List<ArzRecordHeader> readRecordHeadersTable(Stream s, long tableStartOffset, int entries, List<string> stringTable)
+        {
+            var recordHeadersTable = new List<ArzRecordHeader>();
+
+            s.Seek(tableStartOffset, SeekOrigin.Begin);
+            System.IO.BinaryReader reader = new System.IO.BinaryReader(s);
+            for (int i = 0; i < entries; i++)
+            {
+                var recordHeader = new ArzRecordHeader();
+
+                recordHeader.filename = stringTable[reader.ReadInt32()];
+                var typeLength = reader.ReadInt32();
+                recordHeader.type = Encoding.ASCII.GetString(reader.ReadBytes(typeLength));
+                recordHeader.dataOffset = reader.ReadUInt32();
+                recordHeader.dataCompressedSize = reader.ReadInt32();
+                recordHeader.dataDecompressedSize = reader.ReadInt32();
+                s.Seek(8, SeekOrigin.Current); // There not sure what the next 8 bytes are for
+
+                recordHeadersTable.Add(recordHeader);
+            }
+
+            return recordHeadersTable;
+        }
+        
         // Read out a list of strings and puts them in a big array.
         // In C, a string table is typically one large byte buffer that's stuff full of stings. You can then
         // just build a list of pointers into that memory to avoid extra memory allocation per string.

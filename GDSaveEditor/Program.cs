@@ -136,7 +136,7 @@ namespace GDSaveEditor
                     writeCharacterFile(characterFilepath, Globals.character);
                 }),
                 new ActionItem("t", "Test ARZ reader", () => {
-                    ArzReader.read("C:\\Program Files (x86)\\Steam\\steamapps\\common\\Grim Dawn\\database\\database.arz");
+                    var db = ArzReader.read("C:\\Program Files (x86)\\Steam\\steamapps\\common\\Grim Dawn\\database\\database.arz");
                 }),
             };
 
