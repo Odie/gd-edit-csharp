@@ -8,6 +8,13 @@ using System.Reflection;
 using System.Text.RegularExpressions;
 using System.Diagnostics;
 
+using DBResult = System.Collections.Generic.IEnumerable<
+                        System.Collections.Generic.KeyValuePair<
+                            string, 
+                            System.Collections.Generic.Dictionary<
+                                string, 
+                                object>>>;
+
 namespace GDSaveEditor
 {
     public class OnDiskEncoding : System.Attribute
@@ -53,6 +60,12 @@ namespace GDSaveEditor
 
     delegate void ShowScreenState();
 
+    class QueryHistory
+    {
+        public List<string> queryParams;
+        public DBResult collection;
+    }
+
     class Globals
     {
         public static ShowScreenState showScreenState;
@@ -60,10 +73,15 @@ namespace GDSaveEditor
         public static string activeCharacterFile;
         public static Dictionary<string, object> character;
         public static Dictionary<string, Dictionary<string, object>> db;
+
+        public static List<QueryHistory> queryHistory = new List<QueryHistory>();
+        public static int recordsToSkip;
     }
 
     class Program
     {
+
+
         static string getNextBackupFilepath(string path)
         {
             var filename = Path.GetFileName(path);
@@ -123,6 +141,9 @@ namespace GDSaveEditor
 
             var actionMap = new List<ActionItem>
             {
+                new ActionItem("c", "Character selection", () => {
+                    saveFileSelectionScreen();
+                }),
                 new ActionItem("r", "Reload", () => {
                     Globals.character = loadCharacterFile(getCharacterFilepath(Globals.activeCharacterFile));
                 }),
@@ -135,26 +156,6 @@ namespace GDSaveEditor
                     // Write out the new character file
                     mergeCharacterIntoBlockList(Globals.character);
                     writeCharacterFile(characterFilepath, Globals.character);
-                }),
-                new ActionItem("t", "Test ARZ reader", () => {
-                    if(Globals.db == null) {
-                        Globals.db = ArzReader.read("C:\\Program Files (x86)\\Steam\\steamapps\\common\\Grim Dawn\\database\\database.arz");
-                    }
-
-                    var collection = Globals.db.Where(record =>
-                        // "record" is db record path => record dictionary
-                        record.Key.ToLower().Contains("suffix") &&   // Record describes some kind of affix
-                        record.Value.Where( kv => 
-                            // "kv" is a single keyvalue pair in a db record  
-                            kv.Key.ToLower().Contains("levelrequirement")  &&// Record has a field named "levelrequirement"
-                            (uint)kv.Value >= 50
-                        ).Any()
-                    );
-
-                    foreach(var item in collection)
-                    {
-                        Console.WriteLine("{0}", item.Key);
-                    }
                 }),
             };
 
@@ -224,6 +225,7 @@ namespace GDSaveEditor
             }
 
             Console.WriteLine();
+            printTabs(indentLevel);
             Console.ForegroundColor = ConsoleColor.White;
             Console.Write(collection.Count());
             Console.ForegroundColor = ConsoleColor.DarkGray;
@@ -358,13 +360,504 @@ namespace GDSaveEditor
             fieldInfo.SetValue(obj, val);
         }
 
+        static bool showCommandHandler(List<string> parameters)
+        {
+            if (!verifyCharacterLoaded(Globals.character))
+                return true;
+
+            if (parameters.Count == 0)
+            {
+                // When there are no parameters, simply show the entire character map
+                var collection = Globals.character;
+                printDictionary(collection);
+                return true;
+            }
+
+            if (parameters.Count == 1)
+            {
+                var sep = "/".ToCharArray();
+                var path = parameters[0].TrimEnd(sep).Split(sep);
+
+                object target = Globals.character;
+                Dictionary<string, object> walkResult;
+
+                // If the path more than a single component, try walking the structure
+                // with partial fieldname matching.
+                // However, since we're traversing a field, we cannot allow any ambiguity in the path.
+                // We leave out the last component to allow for multiple matches.
+                // This way, "show" can be used to explore, filter, and navigate.
+                if (path.Length > 1)
+                {
+                    walkResult = walkStructure(Globals.character, path.Take(path.Length-1).ToList());
+                    if ((bool)walkResult["walkCompleted?"] == false)
+                    {
+                        Console.WriteLine("No match found");
+                        return true;
+                    }
+                    target = walkResult["target"];
+                }
+
+                // Grab the last component of the path
+                // We're going to allow for multiple matches here.
+                walkResult = walkStructure(target, path.Skip(path.Length - 1).ToList());
+                if ((bool)walkResult["walkCompleted?"] == false)
+                {
+                    if (walkResult["terminationReason"] == "ambiguous")
+                    {
+                        printObject(walkResult["ambiguousTarget"], 1);
+                    }
+                    else
+                    {
+                        Console.WriteLine("No match found");
+                        return true;
+                    }
+                    return true;
+                }
+
+                target = walkResult["target"];
+                if (walkResult["targetFieldname"] != null)
+                {
+                    Console.Write("{0}: ", walkResult["targetFieldname"]);
+                    if (!isBasicType(target.GetType()))
+                        Console.WriteLine();
+                }
+                printObject(target, 1);
+
+                return true;
+            }
+
+            Console.Write("Syntax: show <partial fieldname>");
+            return false;
+        }
+
+        static bool setCommandHandler(List<string> parameters)
+        {
+            if (!verifyCharacterLoaded(Globals.character))
+                return true;
+
+            if (parameters.Count == 2)
+            {
+                var sep = "/".ToCharArray();
+                var path = parameters[0].TrimEnd(sep).Split(sep);
+
+                // If the path more than a single component, try walking the structure
+                // with partial fieldname matching.
+                // However, since we're traversing a field, we cannot allow any ambiguity in the path.
+                // We leave out the last component to allow for multiple matches.
+                // This way, "show" can be used to explore, filter, and navigate.
+                Dictionary<string, object> walkResult;
+                walkResult = walkStructure(Globals.character, path.ToList());
+                if ((bool)walkResult["walkCompleted?"] == false)
+                {
+                    if ((string)walkResult["terminationReason"] == "ambiguous")
+                        Console.Write("The path specifies more than one item");
+                    else
+                        Console.Write("No match found for: {0}", parameters[0]);
+                    return true;
+                }
+
+                object targetParent = walkResult["targetParent"];
+                string fieldname = (string)walkResult["targetFieldname"];
+                object target = walkResult["target"];
+
+                // If we're here, the match count should be exactly 1.
+                // So we can try to set the field to something now.
+                // First, check if we can coerce the new value to the correct type of the field.
+
+                // FIXME!!! Getting the target parent field type this way only deals with complex types
+                // If we ever have a dictionary in the middle of the data hiearchy somewhere, this will break!
+                var fieldType = targetParent.GetType().GetField(fieldname).FieldType;
+
+                // Now that we know what the field type is, we can try to coerce the user input into the correct type
+                dynamic val;
+                if (fieldType == typeof(uint))
+                    val = Convert.ToUInt32(parameters[1]);
+                else if (fieldType == typeof(float))
+                    val = Convert.ToSingle(parameters[1]);
+                else if (fieldType == typeof(bool))
+                    val = Convert.ToBoolean(parameters[1]);
+                else if (fieldType == typeof(byte))
+                    val = Convert.ToByte(parameters[1]);
+                else
+                    // If it's not any of the other types, just treat it as a string
+                    val = parameters[1];
+
+                setField(targetParent, fieldname, val);
+
+                Console.WriteLine("Updated value:");
+                processCommand("show " + parameters[0]);
+                return true;
+            }
+
+            Console.Write("Syntax: set <fieldname> <new value>");
+            return true;
+        }
+
+        private static bool dbHistoryBackHandler(List<string> parameters)
+        {
+            List<QueryHistory> list = Globals.queryHistory;
+            if (list.Count == 0)
+                return true;
+
+            list.RemoveAt(list.Count() - 1);
+            dbShowHistoryHandler(new List<string>());
+            return true;
+        }
+
+        private static bool dbShowHistoryHandler(List<string> parameters)
+        {
+            List<QueryHistory> list = Globals.queryHistory;
+            if(list.Count() == 0)
+            {
+                Console.WriteLine("Query history is empty");
+                return true;
+            }
+
+            for(int i = 0; i < list.Count(); i++)
+            {
+                var history = list[i];
+                Console.WriteLine("{0}:\t{1}", i + 1, string.Join(" ", history.queryParams.ToArray()));
+            }
+            return true;
+        }
+
+        private static bool dbShowResultHandler(List<string> parameters)
+        {
+            // Want to start over from showing record #0?
+            if(parameters.Count() > 0 && parameters[0] == "restart")
+            {
+                Globals.recordsToSkip = 0;
+            }
+
+            if(Globals.queryHistory.Count() == 0)
+            {
+                Console.WriteLine("There are no results to show yet");
+                return true;
+            }
+            QueryHistory history = Globals.queryHistory.Last();
+
+            var results = history.collection;
+            var recordCount = results.Count();
+            var fieldCount = results.Sum(record => record.Value.Count());
+
+            // Print each of the records in the result we retrieved...
+            var recordsShown = 0;
+            var fieldsShown = 0;
+
+            int displayStart = Globals.recordsToSkip;
+            int recordsToSkip = Globals.recordsToSkip;
+            foreach(var item in history.collection)
+            {
+                if(recordsToSkip != 0)
+                {
+                    recordsToSkip--;
+                    continue;
+                }
+                Console.WriteLine("{0}:", item.Key);
+                printDictionary(item.Value, 1);
+                Console.WriteLine();
+
+                // Limit ourselves to a sane number of records
+                // There can be a LOT of them
+                recordsShown++;
+                if (recordsShown >= 100)
+                    break;
+
+                fieldsShown += item.Value.Count();
+                if (fieldsShown >= 300)
+                    break;
+            }
+
+            Globals.recordsToSkip += recordsShown;
+            Console.WriteLine();
+            Console.WriteLine("{0}-{1}/{2} records shown", displayStart, Globals.recordsToSkip,results.Count());
+            return true;
+        }
+
+        private static bool queryCompare(object lhs, object rhs, string op)
+        {
+            var lhsType = lhs.GetType();
+            if(op == "=")
+            {
+                return lhs == rhs;
+            }
+            else if(op == "!=")
+            {
+                return lhs != rhs;
+            }
+            if (lhsType == typeof(uint))
+            {
+                if(op == ">")
+                {
+                    return (uint)lhs > (int)rhs;  
+                }
+                else if(op == "<")
+                {
+                    return (uint)lhs < (int)rhs;  
+                }
+                if (op == ">=")
+                {
+                    return (uint)lhs >= (int)rhs;
+                }
+                else if (op == "<=")
+                {
+                    return (uint)lhs <= (int)rhs;
+                }
+                else
+                    throw new Exception(String.Format("'{0}' is not supported where lhs is a string!", op));
+            }
+            else if(lhsType == typeof(string))
+            {
+                if (op == "~")
+                {
+                    return ((string)lhs).ToLower().Contains(rhs.ToString());
+                }
+                else
+                    throw new Exception(String.Format("'{0}' is not supported where lhs is a string!", op));
+
+            }
+
+            return false;
+        }
+
+        static bool dbQueryVerifyTarget(string target)
+        {
+            if (target != "recordname" && target != "key" && target != "value") {
+                Console.WriteLine("'{0} is not a valid target. Valid options are: 'recordname', 'key', or 'value'", target);
+                return false;
+            }
+            return true;
+        }
+
+        static bool dbQueryVerifyOp(string op)
+        {
+            if(op != "~" && op != "=" && op != ">" && op != "<" && op != "!=" && op != ">="&& op != "<=")
+            {
+                Console.WriteLine("Valid ops are: ~, =, >, <, !=, >=, <=");
+                return false;
+            }
+            return true;
+        }
+
+        static object dqQueryCoerceValue(string valueString)
+        {
+            if (valueString == null)
+                return 0;
+
+            // Try to coerce the input into whatever type it looks like
+            // Integers will take precedence over floats
+            var intRegex = new Regex(@"^[0-9]*$");
+            var floatRegex = new Regex(@"^[0-9]*(?:\.[0-9]*)?$");
+
+            object value = null;
+
+            if (intRegex.IsMatch(valueString)) {
+                int v;
+                var parseResult = int.TryParse(valueString, out v);
+                value = v;
+                Debug.Assert(parseResult);
+            }
+            else if (floatRegex.IsMatch(valueString))
+            {
+                float v;
+                var parseResult = float.TryParse(valueString, out v);
+                value = v;
+                Debug.Assert(parseResult);
+            }
+            else
+                value = valueString;
+
+            return value;
+        }
+
+        // Since we have to work with two separate set of conditions now...
+        // We need to figure out how to "bind" the various variables into the linq
+        // query. If we can order the two clauses into a definite order and simplify
+        // the rest of the code.
+        //
+        // Returns:
+        //   0 - equal precedence
+        //  <0 - target 1 is of higher precedence
+        //  >0 - target 2 is of higher precedence
+        static int dqQueryTargetPrecedence(string target1, string target2)
+        {
+            int score1 = dqQueryTargetAssignPrecedenceScore(target1);
+            int score2 = dqQueryTargetAssignPrecedenceScore(target2);
+            return score1 - score2;
+        }
+
+        static int dqQueryTargetAssignPrecedenceScore(string target)
+        {
+            if(target == "recordname")
+                return 1;
+            if (target == "key")
+                return 2;
+            if (target == "value")
+                return 3;
+
+            throw new Exception("Bad target value sent for precedence");
+            return 0;
+        }
+
+        static void swap<T>(ref T x, ref T y)
+        {
+            T t = y;
+            y = x;
+            x = t;
+        }
+
+        private static bool dbQueryHandler(List<string> parameters)
+        {
+            // The expected syntax is <target field> <operator> <value>
+            // String matches are look like this:
+            //  recordname ~ "suffix"
+            //
+            // valid target fields are:
+            //  "recordname" => targets database record name
+            //  "key" => targets recrod keyname
+            //  "value" => targets record value
+            //
+            //  valid operators are:
+            //   ~  => partial string match
+            //   =  => exact match
+            //   >  => greather than
+            //   <  => less than
+            //   != => not equal
+            //
+            //  valid values:
+            //   string
+            //   signed int
+            //   float
+
+            if (Globals.db == null)
+                Globals.db = ArzReader.read("C:\\Program Files (x86)\\Steam\\steamapps\\common\\Grim Dawn\\database\\database.arz");
+
+            if (parameters.Count() != 3 && parameters.Count() != 6)
+            {
+                Console.WriteLine("Syntax: dq <target field> <op> <value>");
+                return true;
+            }
+
+            var target = parameters[0].ToLower();
+            string target2 = (parameters.Count() > 3 ? parameters[3] : null);
+            if (!dbQueryVerifyTarget(target))
+                return true;
+            if(target2 != null)
+                if (!dbQueryVerifyTarget(target))
+                    return true;
+
+            var op = parameters[1];
+            var op2 = (parameters.Count() > 3 ? parameters[4] : null);
+            if (!dbQueryVerifyOp(op))
+                return true;
+            if(op2 != null)
+                if (!dbQueryVerifyOp(op2))
+                    return true;
+
+            // We have some value.
+            // Try to coerce it into whatever type it looks like
+            // Integers will take precedence over floats
+            var valueString = parameters[2];
+            var valueString2 = (parameters.Count() > 3 ? parameters[5] : null);
+            var value = dqQueryCoerceValue(valueString);
+            var value2 = dqQueryCoerceValue(valueString2);
+
+            // Setup the query
+            // Retreive the dataset we're basing our query from.
+            // This could be the result of a previous query or the whole dataset
+            DBResult result = null;
+            DBResult lastResult = null;
+            if (Globals.queryHistory.Count == 0)
+                lastResult = Globals.db;
+            else
+                lastResult = Globals.queryHistory.Last().collection;
+
+
+            // Bind & execute the query
+            // Only have one clause?
+            if (parameters.Count() == 3)
+            {
+                if (target == "recordname")
+                {
+                    result = lastResult.Where(record =>
+                        queryCompare(record.Key, value.ToString(), op));
+                }
+
+                // key comparison
+                else if (target == "key")
+                {
+                    result = lastResult.Where(record =>
+                        record.Value.Where(kv =>
+                                queryCompare(kv.Key, value.ToString(), op)).Any());
+                }
+
+                // value comparison
+                else if (target == "value")
+                {
+                    result = lastResult.Where(record =>
+                        record.Value.Where(kv =>
+                                queryCompare(kv.Value, value, op)).Any());
+                }
+            }
+            else
+            {
+                // Have two clauses to deal with?
+                // To introduce some sanity, we try to order the two sets of variables
+                // so it's easier to determine which variable should be bound to which in the linq
+                // query.
+                var precedence = dqQueryTargetPrecedence(target, target2);
+                if (precedence == 0)
+                {
+                    Console.WriteLine("Can't deal with two clauses on the same target");
+                    return true;
+                }
+                if(precedence > 0)
+                {
+                    swap(ref target, ref target2);
+                    swap(ref op, ref op2);
+                    swap(ref valueString, ref valueString2);               
+                }
+                    
+                if(target == "recordname" && target2 == "key")
+                {
+                    result = lastResult.Where(record =>
+                        queryCompare(record.Key, valueString, op) &&
+                        record.Value.Where(kv =>
+                                queryCompare(kv.Key, value2, op)).Any());
+                }
+                else if(target == "key" && target2 == "value")
+                {
+                    result = lastResult.Where(record =>
+                        record.Value.Where(kv =>
+                                queryCompare(kv.Key, value, op) &&
+                                queryCompare(kv.Value, value2, op2)).Any());
+
+                }
+                else if(target == "recordname" && target2 == "value")
+                {
+                    result = lastResult.Where(record =>
+                        queryCompare(record.Key, valueString, op) &&
+                        record.Value.Where(kv =>
+                                queryCompare(kv.Value, value2, op)).Any());
+                }
+            }
+
+            var history = new QueryHistory();
+            history.queryParams = parameters;
+            history.collection = result;
+            Globals.queryHistory.Add(history);
+
+            // Print the results
+            processCommand("qshow restart"); 
+            return true;
+        }
 
         // Returns whether the command was understood and handled.
         static bool processCommand(string input)
         {
             var tokens = input.Split(" ".ToCharArray());
             var command = tokens[0].ToLower();
-            var parameters = tokens.Skip(1).ToArray();
+            var parameters = tokens.Skip(1).ToList();
 
             if (command == "exit" || command == "quit")
             {
@@ -373,141 +866,22 @@ namespace GDSaveEditor
             }
 
             if (command == "show")
-            {
-                if (!verifyCharacterLoaded(Globals.character))
-                    return true;
+                return showCommandHandler(parameters);
 
-                if (parameters.Length == 0)
-                {
-                    // When there are no parameters, simply show the entire character map
-                    var collection = Globals.character;
-                    printDictionary(collection);
-                    return true;
-                }
-
-                if (parameters.Length == 1)
-                {
-                    var sep = "/".ToCharArray();
-                    var path = parameters[0].TrimEnd(sep).Split(sep);
-
-                    object target = Globals.character;
-                    Dictionary<string, object> walkResult;
-
-                    // If the path more than a single component, try walking the structure
-                    // with partial fieldname matching.
-                    // However, since we're traversing a field, we cannot allow any ambiguity in the path.
-                    // We leave out the last component to allow for multiple matches.
-                    // This way, "show" can be used to explore, filter, and navigate.
-                    if (path.Length > 1)
-                    {
-                        walkResult = walkStructure(Globals.character, path.Take(path.Length-1).ToList());
-                        if ((bool)walkResult["walkCompleted?"] == false)
-                        {
-                            Console.WriteLine("No match found");
-                            return true;
-                        }
-                        target = walkResult["target"];
-                    }
-
-                    // Grab the last component of the path
-                    // We're going to allow for multiple matches here.
-                    walkResult = walkStructure(target, path.Skip(path.Length - 1).ToList());
-                    if ((bool)walkResult["walkCompleted?"] == false)
-                    {
-                        if (walkResult["terminationReason"] == "ambiguous")
-                        {
-                            printObject(walkResult["ambiguousTarget"], 1);
-                        }
-                        else
-                        {
-                            Console.WriteLine("No match found");
-                            return true;
-                        }
-                        return true;
-                    }
-
-                    target = walkResult["target"];
-                    if (walkResult["targetFieldname"] != null)
-                    {
-                        Console.Write("{0}: ", walkResult["targetFieldname"]);
-                        if (!isBasicType(target.GetType()))
-                            Console.WriteLine();
-                    }
-                    printObject(target, 1);
-
-                    return true;
-                }
-
-                Console.Write("Syntax: show <partial fieldname>");
-                return true;
-            }
-
-            if (command == "set")
-            {
-                if (!verifyCharacterLoaded(Globals.character))
-                    return true;
-
-                if (parameters.Length == 2)
-                {
-                    var sep = "/".ToCharArray();
-                    var path = parameters[0].TrimEnd(sep).Split(sep);
-
-                    // If the path more than a single component, try walking the structure
-                    // with partial fieldname matching.
-                    // However, since we're traversing a field, we cannot allow any ambiguity in the path.
-                    // We leave out the last component to allow for multiple matches.
-                    // This way, "show" can be used to explore, filter, and navigate.
-                    Dictionary<string, object> walkResult;
-                    walkResult = walkStructure(Globals.character, path.ToList());
-                    if ((bool)walkResult["walkCompleted?"] == false)
-                    {
-                        if ((string)walkResult["terminationReason"] == "ambiguous")
-                                Console.Write("The path specifies more than one item");
-                            else
-                                Console.Write("No match found for: {0}", parameters[0]);
-                        return true;
-                    }
-
-                    object targetParent = walkResult["targetParent"];
-                    string fieldname = (string)walkResult["targetFieldname"];
-                    object target = walkResult["target"];
-
-                    // If we're here, the match count should be exactly 1.
-                    // So we can try to set the field to something now.
-                    // First, check if we can coerce the new value to the correct type of the field.
-
-                    // FIXME!!! Getting the target parent field type this way only deals with complex types
-                    // If we ever have a dictionary in the middle of the data hiearchy somewhere, this will break!
-                    var fieldType = targetParent.GetType().GetField(fieldname).FieldType;
-
-                    // Now that we know what the field type is, we can try to coerce the user input into the correct type
-                    dynamic val;
-                    if (fieldType == typeof(uint))
-                        val = Convert.ToUInt32(parameters[1]);
-                    else if (fieldType == typeof(float))
-                        val = Convert.ToSingle(parameters[1]);
-                    else if (fieldType == typeof(bool))
-                        val = Convert.ToBoolean(parameters[1]);
-                    else if (fieldType == typeof(byte))
-                        val = Convert.ToByte(parameters[1]);
-                    else
-                        // If it's not any of the other types, just treat it as a string
-                        val = parameters[1];
-
-                    setField(targetParent, fieldname, val);
-
-                    Console.WriteLine("Updated value:");
-                    processCommand("show " + parameters[0]);
-                    return true;
-                }
-
-                Console.Write("Syntax: set <fieldname> <new value>");
-                return true;
-
-            }
+            else if (command == "set")
+                return setCommandHandler(parameters);
+            else if (command == "q")
+                return dbQueryHandler(parameters);
+            else if (command == "qshow")
+                return dbShowResultHandler(parameters);
+            else if (command == "qpath")
+                return dbShowHistoryHandler(parameters);
+            else if (command == "qback")
+                return dbHistoryBackHandler(parameters);
 
             return false;
         }
+
 
         // Given some data structure and a path, we try to traverse as much of the path as possible.
         static Dictionary<string, object> walkStructure(object structure, List<string> path)
