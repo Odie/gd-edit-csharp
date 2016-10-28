@@ -55,7 +55,7 @@ namespace GDSaveEditor
             }
         }
 
-        internal static Dictionary<string, object> readRecord(Stream s, ArzRecordHeader recordHeader, List<string> stringTable)
+        internal static Dictionary<string, object> readRecord(Stream s, ArzRecordHeader recordHeader, List<string> stringTable, bool ignoreZeroedFields = true)
         {
             // Prep where we're going to store the compressed bytes, taken directly from the file
             byte[] compressedBytes = new byte[recordHeader.dataCompressedSize];
@@ -90,14 +90,20 @@ namespace GDSaveEditor
                         case 0:
                         case 3:
                         default:
-                            val = reader.ReadUInt32(); 
+                            val = reader.ReadUInt32();
+                            if (ignoreZeroedFields && (uint)val == 0)
+                                continue;
                             break;
 
                         case 1:
                             val = reader.ReadSingle();
+                            if (ignoreZeroedFields && (Single)val == 0.0)
+                                continue;
                             break;
                         case 2:
                             val = stringTable[reader.ReadInt32()];
+                            if (ignoreZeroedFields && (string)val == String.Empty)
+                                continue;
                             break; 
                     }
 
