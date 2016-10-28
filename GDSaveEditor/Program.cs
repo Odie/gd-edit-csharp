@@ -502,6 +502,13 @@ namespace GDSaveEditor
                 var pathItem = path[i];
                 Type targetType = target.GetType();
 
+                bool skipExactMatch = false;
+                if(pathItem.Last() == '*')
+                {
+                    skipExactMatch = true;
+                    pathItem = pathItem.TrimEnd("*".ToCharArray());
+                }
+
                 // If we're looking at a basic type, there is no way to further navigate into the data
                 // heiarchy.
                 if (isBasicType(targetType))
@@ -526,9 +533,11 @@ namespace GDSaveEditor
                 if (isDictionaryWithStringKeys(target))
                 {
                     // Try to perform a partial match on the current path item
-                    IEnumerable<KeyValuePair<string, object>> exactMatches = exactFieldMatch(target, pathItem);
+                    IEnumerable<KeyValuePair<string, object>> exactMatches = null;
+                    if(!skipExactMatch)
+                        exactMatches = exactFieldMatch(target, pathItem);
                     IEnumerable<KeyValuePair<string, object>> partialMatches = partialFieldMatch(target, pathItem);
-                    var collection = (exactMatches.Count() == 1 ? exactMatches : partialMatches);
+                    var collection = (exactMatches != null && exactMatches.Count() == 1 ? exactMatches : partialMatches);
 
                     // Make sure we're only dealing with one result
                     // If we have more than one result, that means the given path specifies more than one item.
@@ -559,11 +568,13 @@ namespace GDSaveEditor
                 {
                     // Can we find a field in the structure to navigate to?
                     // If not, we're done traversing the path
-                    var exactMatches = targetType.GetFields().Where(fieldInfo =>
+                    dynamic exactMatches = null;
+                    if(!skipExactMatch)
+                        exactMatches = targetType.GetFields().Where(fieldInfo =>
                                                             fieldInfo.Name.Contains(pathItem));
                     var partialMatches = targetType.GetFields().Where(fieldInfo =>
                                                             fieldInfo.Name.ToLower().Contains(pathItem));
-                    var collection = (exactMatches.Count() == 1 ? exactMatches : partialMatches);
+                    var collection = (exactMatches != null && exactMatches.Count() == 1 ? exactMatches : partialMatches);
 
                     if (collection.Count() == 0)
                     {
