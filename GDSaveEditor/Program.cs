@@ -59,6 +59,7 @@ namespace GDSaveEditor
         public static List<ActionItem> activeActionMap;
         public static string activeCharacterFile;
         public static Dictionary<string, object> character;
+        public static Dictionary<string, Dictionary<string, object>> db;
     }
 
     class Program
@@ -136,7 +137,24 @@ namespace GDSaveEditor
                     writeCharacterFile(characterFilepath, Globals.character);
                 }),
                 new ActionItem("t", "Test ARZ reader", () => {
-                    var db = ArzReader.read("C:\\Program Files (x86)\\Steam\\steamapps\\common\\Grim Dawn\\database\\database.arz");
+                    if(Globals.db == null) {
+                        Globals.db = ArzReader.read("C:\\Program Files (x86)\\Steam\\steamapps\\common\\Grim Dawn\\database\\database.arz");
+                    }
+
+                    var collection = Globals.db.Where(record =>
+                        // "record" is db record path => record dictionary
+                        record.Key.ToLower().Contains("suffix") &&   // Record describes some kind of affix
+                        record.Value.Where( kv => 
+                            // "kv" is a single keyvalue pair in a db record  
+                            kv.Key.ToLower().Contains("levelrequirement")  &&// Record has a field named "levelrequirement"
+                            (uint)kv.Value >= 50
+                        ).Any()
+                    );
+
+                    foreach(var item in collection)
+                    {
+                        Console.WriteLine("{0}", item.Key);
+                    }
                 }),
             };
 

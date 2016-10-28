@@ -45,7 +45,7 @@ namespace GDSaveEditor
                 var timer = System.Diagnostics.Stopwatch.StartNew();
                 foreach(var recordHeader in recordsTable)
                 {
-                    var record = readRecord(fs, recordsTable[0], stringTable);
+                    var record = readRecord(fs, recordHeader, stringTable);
                     db[recordHeader.filename] = record;
                 }
                 timer.Stop();
