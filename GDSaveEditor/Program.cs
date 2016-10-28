@@ -282,6 +282,16 @@ namespace GDSaveEditor
             }
         }
 
+        static IEnumerable<KeyValuePair<string, object>> exactFieldMatch(Dictionary<string, object> dictionary, string target)
+        {
+            var collection = dictionary
+                                .Where(p => !p.Key.StartsWith("meta-"))
+                                .Where(pair =>
+                                    pair.Key.Contains(target));
+
+            return collection;
+        }
+
         static IEnumerable<KeyValuePair<string, object>> partialFieldMatch(Dictionary<string, object> dictionary, string target)
         {
             var collection = dictionary
@@ -302,6 +312,7 @@ namespace GDSaveEditor
 
             return false;
         }
+
         // Sets a field on the given object regardless of wether it's a dictionary of some other complex type
         static void setField(object obj, string fieldname, object val)
         {
@@ -394,9 +405,14 @@ namespace GDSaveEditor
                         return true;
                     }
 
+                    target = walkResult["target"];
                     if (walkResult["targetFieldname"] != null)
-                        Console.WriteLine("{0}: ", walkResult["targetFieldname"]);
-                    printObject(walkResult["target"], 1);
+                    {
+                        Console.Write("{0}: ", walkResult["targetFieldname"]);
+                        if (!isBasicType(target.GetType()))
+                            Console.WriteLine();
+                    }
+                    printObject(target, 1);
 
                     return true;
                 }
@@ -507,10 +523,12 @@ namespace GDSaveEditor
                 }
 
                 // If we're looking at a dictionary...
-                if (targetType.IsGenericType && targetType.GetGenericTypeDefinition() == typeof(Dictionary<,>) && targetType.GetGenericArguments()[0] == typeof(string))
+                if (isDictionaryWithStringKeys(target))
                 {
                     // Try to perform a partial match on the current path item
-                    IEnumerable<KeyValuePair<string, object>> collection = partialFieldMatch(target, pathItem);
+                    IEnumerable<KeyValuePair<string, object>> exactMatches = exactFieldMatch(target, pathItem);
+                    IEnumerable<KeyValuePair<string, object>> partialMatches = partialFieldMatch(target, pathItem);
+                    var collection = (exactMatches.Count() == 1 ? exactMatches : partialMatches);
 
                     // Make sure we're only dealing with one result
                     // If we have more than one result, that means the given path specifies more than one item.
@@ -541,8 +559,12 @@ namespace GDSaveEditor
                 {
                     // Can we find a field in the structure to navigate to?
                     // If not, we're done traversing the path
-                    var collection = targetType.GetFields().Where(fieldInfo =>
+                    var exactMatches = targetType.GetFields().Where(fieldInfo =>
+                                                            fieldInfo.Name.Contains(pathItem));
+                    var partialMatches = targetType.GetFields().Where(fieldInfo =>
                                                             fieldInfo.Name.ToLower().Contains(pathItem));
+                    var collection = (exactMatches.Count() == 1 ? exactMatches : partialMatches);
+
                     if (collection.Count() == 0)
                     {
                         result["terminationReason"] = "no match";
@@ -1063,7 +1085,6 @@ namespace GDSaveEditor
             public UInt32 version;
             public UInt32 stashWidth;
             public UInt32 stashHeight;
-            //public UInt32 numStashItems;
             public List<StashItem> stashItems = new List<StashItem>();
         }
 
