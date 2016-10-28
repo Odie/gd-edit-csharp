@@ -18,6 +18,15 @@ namespace GDSaveEditor
         public uint stringTableSize;
     }
 
+    class ArzRecordHeader
+    {
+        public string filename;
+        public string type;
+        public uint dataOffset;
+        public int dataCompressedSize;
+        public int dataDecompressedSize;
+    }
+
     class ArzReader
     {
         List<String> stringTable;
@@ -33,21 +42,81 @@ namespace GDSaveEditor
                     throw new Exception("I don't understand this ARZ format!");
 
                 var stringTable = readStringTable(fs, header.stringTableStart, header.stringTableStart + header.stringTableSize);
+                var recordsTable = new List<ArzRecordHeader>();
 
                 fs.Seek(header.recordTableStart, SeekOrigin.Begin);
                 System.IO.BinaryReader reader = new System.IO.BinaryReader(fs);
                 for (int i = 0; i < header.recordTableEntries; i++)
                 {
-                    var filename = stringTable[reader.ReadInt32()];
-                    Console.WriteLine("{0}: {1}", i, filename);
+                    var recordHeader = new ArzRecordHeader();
+
+                    recordHeader.filename = stringTable[reader.ReadInt32()];
                     var typeLength = reader.ReadInt32();
-                    var type = Encoding.ASCII.GetString(reader.ReadBytes(typeLength));
-                    var dataOffset = reader.ReadUInt32();
-                    var dataCompressedSize = reader.ReadUInt32();
-                    var dataDecompressedSize = reader.ReadUInt32();
+                    recordHeader.type = Encoding.ASCII.GetString(reader.ReadBytes(typeLength));
+                    recordHeader.dataOffset = reader.ReadUInt32();
+                    recordHeader.dataCompressedSize = reader.ReadInt32();
+                    recordHeader.dataDecompressedSize = reader.ReadInt32();
                     fs.Seek(8, SeekOrigin.Current); // There not sure what the next 8 bytes are for
+
+                    recordsTable.Add(recordHeader);
+                }
+
+                var contents = read(fs, recordsTable[0], stringTable);
+            }
+        }
+
+        internal static Dictionary<string, object> read(Stream s, ArzRecordHeader recordHeader, List<string> stringTable)
+        {
+            // Prep where we're going to store the compressed bytes, taken directly from the file
+            byte[] compressedBytes = new byte[recordHeader.dataCompressedSize];
+
+            // Go to the correct file location and read
+            // FIXME!!! Magic number 24 is the size of the file header on disk.
+            // It'd be really nice for CLR to be able to just give me that size so the number doesn't have to be hard coded here.
+            s.Seek(recordHeader.dataOffset + 24, SeekOrigin.Begin);
+            s.Read(compressedBytes, 0, recordHeader.dataCompressedSize);
+
+            // Decompress the data
+            byte[] decompressedBytes = LZ4.LZ4Codec.Decode(compressedBytes, 0, compressedBytes.Length, recordHeader.dataDecompressedSize);
+
+            MemoryStream recordStream = new MemoryStream(decompressedBytes);
+            BinaryReader reader = new BinaryReader(recordStream);
+
+            var record = new Dictionary<string, object>();
+
+            while (recordStream.Position < recordStream.Length)
+            {
+                var dataType = reader.ReadUInt16();
+                var dataCount = reader.ReadUInt16();
+                var dataFieldnameIndex = reader.ReadInt32();
+
+                var fieldName = stringTable[dataFieldnameIndex];
+
+                for(int i = 0; i < dataCount; i++)
+                {
+                    object val = null;
+                    switch(dataType)
+                    {
+                        case 0:
+                        case 3:
+                        default:
+                            val = reader.ReadUInt32(); 
+                            break;
+
+                        case 1:
+                            val = reader.ReadSingle();
+                            break;
+                        case 2:
+                            val = stringTable[reader.ReadInt32()];
+                            break; 
+                    }
+
+                    record[fieldName] = val;
                 }
             }
+
+
+            return record;
         }
 
         // Read out a list of strings and puts them in a big array.
