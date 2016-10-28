@@ -135,6 +135,9 @@ namespace GDSaveEditor
                     mergeCharacterIntoBlockList(Globals.character);
                     writeCharacterFile(characterFilepath, Globals.character);
                 }),
+                new ActionItem("t", "Test ARZ reader", () => {
+                    ArzReader.read("C:\\Program Files (x86)\\Steam\\steamapps\\common\\Grim Dawn\\database\\database.arz");
+                }),
             };
 
             Globals.activeActionMap = actionMap;
@@ -287,7 +290,7 @@ namespace GDSaveEditor
             var collection = dictionary
                                 .Where(p => !p.Key.StartsWith("meta-"))
                                 .Where(pair =>
-                                    pair.Key.Contains(target));
+                                    pair.Key == target);
 
             return collection;
         }
@@ -568,10 +571,10 @@ namespace GDSaveEditor
                 {
                     // Can we find a field in the structure to navigate to?
                     // If not, we're done traversing the path
-                    dynamic exactMatches = null;
+                    System.Collections.Generic.IEnumerable<FieldInfo> exactMatches = null;
                     if(!skipExactMatch)
                         exactMatches = targetType.GetFields().Where(fieldInfo =>
-                                                            fieldInfo.Name.Contains(pathItem));
+                                                            fieldInfo.Name == pathItem);
                     var partialMatches = targetType.GetFields().Where(fieldInfo =>
                                                             fieldInfo.Name.ToLower().Contains(pathItem));
                     var collection = (exactMatches != null && exactMatches.Count() == 1 ? exactMatches : partialMatches);
@@ -715,16 +718,27 @@ namespace GDSaveEditor
             Write_Byte(s, encrypter, data ? (byte)1 : (byte)0);
         }
 
+        // NOTE: We're not decrypting UInt16 values because they are not used by the save file format.
+        internal static UInt16 Read_UInt16(Stream s, Encrypter encrypter)
+        {   
+            byte[] data = new byte[2];
+            s.Read(data, 0, 2);
+            return BitConverter.ToUInt16(data, 0);
+        }
+
         // Read a 4 byte value
         // Note that we cannot use the "Read_bytes" function because they make use of the encrypter state differently.
         // This function uses the entire 4 bytes of the encrypter state to decrypt the value.
         // Read_Bytes will ignore the 3 higher bytes.
-        private static uint Read_UInt32(Stream s, Encrypter encrypter)
+        internal static uint Read_UInt32(Stream s, Encrypter encrypter)
         {   
             byte[] data = new byte[4];
             s.Read(data, 0, 4);
-            uint val = BitConverter.ToUInt32(data, 0) ^ encrypter.state;
-            encrypter.updateState(data);
+            uint val = BitConverter.ToUInt32(data, 0);
+            if (encrypter != null) {
+                val = val ^ encrypter.state;
+                encrypter.updateState(data);
+            }
             return val;
         }
 
@@ -741,7 +755,7 @@ namespace GDSaveEditor
             s.Write(BitConverter.GetBytes(val), 0, 4);
         }
 
-        private static float Read_Float(Stream s, Encrypter encrypter)
+        internal static float Read_Float(Stream s, Encrypter encrypter)
         {
             return BitConverter.ToSingle(BitConverter.GetBytes(Read_UInt32(s, encrypter)), 0);
         }
@@ -1418,7 +1432,8 @@ namespace GDSaveEditor
         {
             if (type == typeof(string) ||
                 type == typeof(bool) ||
-                type == typeof(uint) ||
+                type == typeof(UInt32) ||
+                type == typeof(UInt16) ||
                 type == typeof(byte) ||
                 type == typeof(float))
                 return true;
@@ -1440,8 +1455,10 @@ namespace GDSaveEditor
                 return Read_String(s, encrypter);
             else if (type == typeof(bool))
                 return Read_Bool(s, encrypter);
-            else if (type == typeof(uint))
+            else if (type == typeof(UInt32))
                 return Read_UInt32(s, encrypter);
+            else if (type == typeof(UInt16))
+                return Read_UInt16(s, encrypter);
             else if (type == typeof(byte))
                 return Read_Byte(s, encrypter);
             else if (type == typeof(float))
@@ -1475,7 +1492,7 @@ namespace GDSaveEditor
         // The benefit of such an approach is that we can encode the format of the character file
         // using the structure to deserialize into. We don't need to hand code the deserialization
         // of every field.
-        static Object readStructure(Type type, Stream s, Encrypter encrypter) {
+        internal static Object readStructure(Type type, Stream s, Encrypter encrypter) {
             if (isBasicType(type))
                 return Read_Basic_Type(type, s, encrypter);
 
