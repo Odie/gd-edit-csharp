@@ -579,11 +579,11 @@ namespace GDSaveEditor
             var lhsType = lhs.GetType();
             if(op == "=")
             {
-                return lhs == rhs;
+                return lhs.Equals(rhs);
             }
             else if(op == "!=")
             {
-                return lhs != rhs;
+                return !lhs.Equals(rhs);
             }
             if (lhsType == typeof(uint))
             {
@@ -603,8 +603,7 @@ namespace GDSaveEditor
                 {
                     return (uint)lhs <= (int)rhs;
                 }
-                else
-                    throw new Exception(String.Format("'{0}' is not supported where lhs is a string!", op));
+                return false;
             }
             else if(lhsType == typeof(string))
             {
@@ -612,9 +611,7 @@ namespace GDSaveEditor
                 {
                     return ((string)lhs).ToLower().Contains(rhs.ToString());
                 }
-                else
-                    throw new Exception(String.Format("'{0}' is not supported where lhs is a string!", op));
-
+                return false;
             }
 
             return false;
