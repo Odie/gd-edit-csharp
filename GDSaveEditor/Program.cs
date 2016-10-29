@@ -73,6 +73,7 @@ namespace GDSaveEditor
         public static string activeCharacterFile;
         public static Dictionary<string, object> character;
         public static Dictionary<string, Dictionary<string, object>> db;
+        public static Dictionary<string, string> tags;
 
         public static List<QueryHistory> queryHistory = new List<QueryHistory>();
         public static int recordsToSkip;
@@ -80,7 +81,56 @@ namespace GDSaveEditor
 
     class Program
     {
+        static Dictionary<string, string> readTagFile(Stream s)
+        {
+            var reader = new StreamReader(s);
+            var dict = new Dictionary<string, string>();
 
+            while (!reader.EndOfStream)
+            {
+                string line = reader.ReadLine();
+
+                // Look for a "=" as the key and value separator
+                // There are empty lines and comments in the tag files also.
+                // In general, it looks like we can ignore the line if we can't find a "=" symbol
+                int sepIndex = line.IndexOf('=');
+                if (sepIndex == -1) {
+                    continue;
+                }
+
+                string key = line.Substring(0, sepIndex);
+                string val = line.Substring(sepIndex+1, line.Length - sepIndex - 1);
+                dict[key] = val;
+            }
+
+            return dict;
+        }
+
+        static Dictionary<string, string> readAllTags(string filepath)
+        {
+            // Unpack all the localization/tag files
+            var contents = ArcReader.read(filepath);
+
+            // Put all the tags into a single dictionary
+            var tags = new Dictionary<string, string>();
+            foreach(var item in contents)
+            {
+                if(!item.Key.StartsWith("tag"))
+                    continue;
+
+                var dict = readTagFile(new MemoryStream(item.Value));
+
+                foreach(var pair in dict)
+                {
+                    // We're not expecting any duplicate keys/tags
+                    Debug.Assert(!tags.ContainsKey(pair.Key));
+
+                    // Add the new tags into the dictionary
+                    tags[pair.Key] = pair.Value;
+                }
+            }
+            return tags;
+        }
 
         static string getNextBackupFilepath(string path)
         {
@@ -156,9 +206,6 @@ namespace GDSaveEditor
                     // Write out the new character file
                     mergeCharacterIntoBlockList(Globals.character);
                     writeCharacterFile(characterFilepath, Globals.character);
-                }),
-                new ActionItem("t", "Test ARC reader", () => {
-                    ArcReader.read("C:\\Program Files (x86)\\Steam\\steamapps\\common\\Grim Dawn\\resources\\text_en.arc");
                 }),
             };
 
@@ -730,7 +777,45 @@ namespace GDSaveEditor
             //   float
 
             if (Globals.db == null)
+            {
                 Globals.db = ArzReader.read("C:\\Program Files (x86)\\Steam\\steamapps\\common\\Grim Dawn\\database\\database.arz");
+                Globals.tags = readAllTags("C:\\Program Files (x86)\\Steam\\steamapps\\common\\Grim Dawn\\resources\\text_en.arc");
+
+                // We want to update all db fields where some string content starts with "tag" to the English display string
+                // which is stored in the tags table now.
+
+                // Iterate through all records
+                var db = Globals.db;
+                var tags = Globals.tags;
+                foreach(var recordname in db.Keys.ToList())
+                {
+                    var record = db[recordname];
+
+                    // Iterate through all fields
+                    foreach(var fieldname in record.Keys.ToList())
+                    {
+                        var fieldValue = record[fieldname];
+
+                        // If the field is a string...
+                        if (fieldValue.GetType() != typeof(string))
+                            continue;
+
+                        // And the field starts with "tag"
+                        var tagName = (string)fieldValue;
+                        if(tagName.StartsWith("tag"))
+                        {
+                            // Grab a the corresponding value in the tag table
+                            string tagValue = null;
+                            if(Globals.tags.TryGetValue(tagName, out tagValue))
+                            {
+                                // Set the value into the correct location in the database
+                                Globals.db[recordname][fieldname] = tagValue;
+                            }
+
+                        }
+                    }
+                }
+            }
 
             if (parameters.Count() == 1 && (parameters[0] == "restart" || parameters[0] == "new"))
             {
