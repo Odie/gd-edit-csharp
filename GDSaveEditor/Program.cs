@@ -516,7 +516,11 @@ namespace GDSaveEditor
 
                 // FIXME!!! Getting the target parent field type this way only deals with complex types
                 // If we ever have a dictionary in the middle of the data hiearchy somewhere, this will break!
-                var fieldType = targetParent.GetType().GetField(fieldname).FieldType;
+                Type fieldType = null;
+                if (isDictionaryWithStringKeys(targetParent))
+                    fieldType = ((Dictionary<string, object>)targetParent)[fieldname].GetType();
+                else
+                    fieldType = targetParent.GetType().GetField(fieldname).FieldType;
 
                 // Now that we know what the field type is, we can try to coerce the user input into the correct type
                 dynamic val;
