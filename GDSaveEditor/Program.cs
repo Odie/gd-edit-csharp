@@ -207,7 +207,17 @@ namespace GDSaveEditor
                     mergeCharacterIntoBlockList(Globals.character);
                     writeCharacterFile(characterFilepath, Globals.character);
                 }),
+
+                new ActionItem("t", "test", () => {
+                    var matches = Regex.Matches("q key ~ \"hello world\"",  @"[\""].+?[\""]|[^ ]+");
+                    var list = matches.Cast<Match>().Select(match => match.Value).ToList();
+                    foreach (var item in list)
+                    {
+                        Console.WriteLine(item);
+                    }
+                }),
             };
+
 
             Globals.activeActionMap = actionMap;
         }
@@ -533,8 +543,11 @@ namespace GDSaveEditor
                 else if (fieldType == typeof(byte))
                     val = Convert.ToByte(parameters[1]);
                 else
+                {
                     // If it's not any of the other types, just treat it as a string
                     val = parameters[1];
+                    val = val.Trim("\"".ToCharArray());
+                }
 
                 setField(targetParent, fieldname, val);
 
@@ -816,7 +829,7 @@ namespace GDSaveEditor
                         var tagName = (string)fieldValue;
                         if(tagName.StartsWith("tag"))
                         {
-                            // Grab a the corresponding value in the tag table
+                            // Grab a the corresponding value in the tag table/
                             string tagValue = null;
                             if(Globals.tags.TryGetValue(tagName, out tagValue))
                             {
@@ -830,6 +843,11 @@ namespace GDSaveEditor
                 timer.Stop();
                 Console.WriteLine("{0:##.##} seconds to update the db tagnames", timer.ElapsedMilliseconds/1000f);
             }
+
+            // Reconstruct, then tokenize the input 
+            string originalInput = string.Join(" ", parameters.ToArray());
+            var matches = Regex.Matches(originalInput, @"[\""].+?[\""]|[^ ]+");
+            parameters = matches.Cast<Match>().Select(match => match.Value.Trim(" \"".ToCharArray())).ToList();
 
             if (parameters.Count() == 1 && (parameters[0] == "restart" || parameters[0] == "new"))
             {
