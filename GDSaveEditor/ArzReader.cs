@@ -49,7 +49,7 @@ namespace GDSaveEditor
                     db[recordHeader.filename] = record;
                 }
                 timer.Stop();
-                Console.WriteLine("{0} seconds to read the db", TimeSpan.FromMilliseconds(timer.ElapsedMilliseconds).Seconds);
+                Console.WriteLine("{0:##.##} seconds to read the db", timer.ElapsedMilliseconds/1000f);
 
                 return db;
             }

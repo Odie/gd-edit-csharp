@@ -729,9 +729,16 @@ namespace GDSaveEditor
             if (Globals.db == null)
                 Globals.db = ArzReader.read("C:\\Program Files (x86)\\Steam\\steamapps\\common\\Grim Dawn\\database\\database.arz");
 
+            if (parameters.Count() == 1 && (parameters[0] == "restart" || parameters[0] == "new"))
+            {
+                Globals.queryHistory.Clear();
+                Console.WriteLine("Okay! Ready to start new query!");
+                return true;
+            }
+
             if (parameters.Count() != 3 && parameters.Count() != 6)
             {
-                Console.WriteLine("Syntax: dq <target field> <op> <value>");
+                Console.WriteLine("Syntax: q <target field> <op> <value>");
                 return true;
             }
 
@@ -777,7 +784,7 @@ namespace GDSaveEditor
                 if (target == "recordname")
                 {
                     result = lastResult.Where(record =>
-                        queryCompare(record.Key, value.ToString(), op));
+                        queryCompare(record.Key, valueString, op));
                 }
 
                 // key comparison
@@ -785,7 +792,7 @@ namespace GDSaveEditor
                 {
                     result = lastResult.Where(record =>
                         record.Value.Where(kv =>
-                                queryCompare(kv.Key, value.ToString(), op)).Any());
+                                queryCompare(kv.Key, valueString, op)).Any());
                 }
 
                 // value comparison
