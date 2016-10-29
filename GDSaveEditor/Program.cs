@@ -7,6 +7,8 @@ using System.Threading.Tasks;
 using System.Reflection;
 using System.Text.RegularExpressions;
 using System.Diagnostics;
+using Console = Colorful.Console;
+using System.Drawing;
 
 using DBResult = System.Collections.Generic.IEnumerable<
                         System.Collections.Generic.KeyValuePair<
@@ -207,15 +209,6 @@ namespace GDSaveEditor
                     mergeCharacterIntoBlockList(Globals.character);
                     writeCharacterFile(characterFilepath, Globals.character);
                 }),
-
-                new ActionItem("t", "test", () => {
-                    var matches = Regex.Matches("q key ~ \"hello world\"",  @"[\""].+?[\""]|[^ ]+");
-                    var list = matches.Cast<Match>().Select(match => match.Value).ToList();
-                    foreach (var item in list)
-                    {
-                        Console.WriteLine(item);
-                    }
-                }),
             };
 
 
@@ -259,38 +252,29 @@ namespace GDSaveEditor
 
             if (collection.Count() == 0)
             {
-                Console.ForegroundColor = ConsoleColor.Red;
-                Console.WriteLine("No matches");
-                Console.ResetColor();
+                Console.WriteLine("No matches", Color.Red);
                 return;
             }
 
             foreach (KeyValuePair<string, object> entry in collection)
             {
                 printTabs(indentLevel);
-                Console.ForegroundColor = ConsoleColor.White;
-                Console.Write("{0}: ", entry.Key);
-                Console.ForegroundColor = ConsoleColor.DarkGray;
+                Console.Write("{0}: ", entry.Key, Color.White);
 
                 Type valueType = entry.Value.GetType();
                 if (valueType.IsGenericType && valueType.GetGenericTypeDefinition() == typeof(List<>))
                 {
                     dynamic list = entry.Value;
-                    Console.WriteLine("{0} item(s) of type: {1}", list.Count, valueType.GetGenericArguments()[0].Name);
+                    Console.WriteLine("{0} item(s) of type: {1}", list.Count, valueType.GetGenericArguments()[0].Name, Color.DarkGray);
                 }
                 else
                     Console.WriteLine(entry.Value);
-
-                Console.ResetColor();
             }
 
             Console.WriteLine();
             printTabs(indentLevel);
-            Console.ForegroundColor = ConsoleColor.White;
-            Console.Write(collection.Count());
-            Console.ForegroundColor = ConsoleColor.DarkGray;
-            Console.WriteLine(" item(s) shown");
-            Console.ResetColor();
+            Console.Write(collection.Count(), Color.White);
+            Console.WriteLine(" item(s) shown", Color.DarkGray);
         }
 
         static bool verifyCharacterLoaded(Dictionary<string, object> character)
@@ -451,7 +435,7 @@ namespace GDSaveEditor
                     walkResult = walkStructure(Globals.character, path.Take(path.Length-1).ToList());
                     if ((bool)walkResult["walkCompleted?"] == false)
                     {
-                        Console.WriteLine("No match found");
+                        Console.WriteLine("No match found", Color.DarkRed);
                         return true;
                     }
                     target = walkResult["target"];
@@ -468,7 +452,7 @@ namespace GDSaveEditor
                     }
                     else
                     {
-                        Console.WriteLine("No match found");
+                        Console.WriteLine("No match found", Color.DarkRed);
                         return true;
                     }
                     return true;
@@ -1173,16 +1157,14 @@ namespace GDSaveEditor
                 }
                 printActiveActionMap();
                 Console.WriteLine();
-                Console.ForegroundColor = ConsoleColor.Green;
-                Console.Write("> ");
+                Console.Write("> ", Color.Green);
                 Console.ResetColor();
 
                 var input = Console.ReadLine();
                 Console.WriteLine();
                 processInput(input);
                 Console.WriteLine();
-                Console.ForegroundColor = ConsoleColor.DarkYellow;
-                Console.WriteLine("----------");
+                Console.WriteLine("----------", Color.DarkGoldenrod);
                 Console.ResetColor();
             }
             
