@@ -778,13 +778,21 @@ namespace GDSaveEditor
 
             if (Globals.db == null)
             {
+                var timer = System.Diagnostics.Stopwatch.StartNew();
                 Globals.db = ArzReader.read("C:\\Program Files (x86)\\Steam\\steamapps\\common\\Grim Dawn\\database\\database.arz");
+                timer.Stop();
+                Console.WriteLine("{0:##.##} seconds to read the db", timer.ElapsedMilliseconds/1000f);
+
+                timer.Restart();
                 Globals.tags = readAllTags("C:\\Program Files (x86)\\Steam\\steamapps\\common\\Grim Dawn\\resources\\text_en.arc");
+                timer.Stop();
+                Console.WriteLine("{0:##.##} seconds to read the tag files", timer.ElapsedMilliseconds/1000f);
 
                 // We want to update all db fields where some string content starts with "tag" to the English display string
                 // which is stored in the tags table now.
 
                 // Iterate through all records
+                timer.Restart();
                 var db = Globals.db;
                 var tags = Globals.tags;
                 foreach(var recordname in db.Keys.ToList())
@@ -815,6 +823,8 @@ namespace GDSaveEditor
                         }
                     }
                 }
+                timer.Stop();
+                Console.WriteLine("{0:##.##} seconds to update the db tagnames", timer.ElapsedMilliseconds/1000f);
             }
 
             if (parameters.Count() == 1 && (parameters[0] == "restart" || parameters[0] == "new"))
