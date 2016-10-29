@@ -157,6 +157,9 @@ namespace GDSaveEditor
                     mergeCharacterIntoBlockList(Globals.character);
                     writeCharacterFile(characterFilepath, Globals.character);
                 }),
+                new ActionItem("t", "Test ARC reader", () => {
+                    ArcReader.read("C:\\Program Files (x86)\\Steam\\steamapps\\common\\Grim Dawn\\resources\\text_en.arc");
+                }),
             };
 
             Globals.activeActionMap = actionMap;
@@ -1122,6 +1125,20 @@ namespace GDSaveEditor
             return BitConverter.ToUInt16(data, 0);
         }
 
+        internal static Int32 Read_Int32(Stream s, Encrypter encrypter)
+        {   
+            byte[] data = new byte[4];
+            s.Read(data, 0, 4);
+            return BitConverter.ToInt32(data, 0);
+        }
+
+        internal static UInt64 Read_UInt64(Stream s, Encrypter encrypter)
+        {   
+            byte[] data = new byte[8];
+            s.Read(data, 0, 8);
+            return BitConverter.ToUInt64(data, 0);
+        }
+
         // Read a 4 byte value
         // Note that we cannot use the "Read_bytes" function because they make use of the encrypter state differently.
         // This function uses the entire 4 bytes of the encrypter state to decrypt the value.
@@ -1830,6 +1847,8 @@ namespace GDSaveEditor
                 type == typeof(bool) ||
                 type == typeof(UInt32) ||
                 type == typeof(UInt16) ||
+                type == typeof(Int32) ||
+                type == typeof(UInt64) ||
                 type == typeof(byte) ||
                 type == typeof(float))
                 return true;
@@ -1853,8 +1872,12 @@ namespace GDSaveEditor
                 return Read_Bool(s, encrypter);
             else if (type == typeof(UInt32))
                 return Read_UInt32(s, encrypter);
+            else if (type == typeof(Int32))
+                return Read_Int32(s, encrypter);
             else if (type == typeof(UInt16))
                 return Read_UInt16(s, encrypter);
+            else if (type == typeof(UInt64))
+                return Read_UInt64(s, encrypter);
             else if (type == typeof(byte))
                 return Read_Byte(s, encrypter);
             else if (type == typeof(float))
