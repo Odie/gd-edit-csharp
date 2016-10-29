@@ -73,6 +73,7 @@ namespace GDSaveEditor
         public static string activeCharacterFile;
         public static Dictionary<string, object> character;
         public static Dictionary<string, Dictionary<string, object>> db;
+        public static Dictionary<string, string> tags;
 
         public static List<QueryHistory> queryHistory = new List<QueryHistory>();
         public static int recordsToSkip;
@@ -80,7 +81,56 @@ namespace GDSaveEditor
 
     class Program
     {
+        static Dictionary<string, string> readTagFile(Stream s)
+        {
+            var reader = new StreamReader(s);
+            var dict = new Dictionary<string, string>();
 
+            while (!reader.EndOfStream)
+            {
+                string line = reader.ReadLine();
+
+                // Look for a "=" as the key and value separator
+                // There are empty lines and comments in the tag files also.
+                // In general, it looks like we can ignore the line if we can't find a "=" symbol
+                int sepIndex = line.IndexOf('=');
+                if (sepIndex == -1) {
+                    continue;
+                }
+
+                string key = line.Substring(0, sepIndex);
+                string val = line.Substring(sepIndex+1, line.Length - sepIndex - 1);
+                dict[key] = val;
+            }
+
+            return dict;
+        }
+
+        static Dictionary<string, string> readAllTags(string filepath)
+        {
+            // Unpack all the localization/tag files
+            var contents = ArcReader.read(filepath);
+
+            // Put all the tags into a single dictionary
+            var tags = new Dictionary<string, string>();
+            foreach(var item in contents)
+            {
+                if(!item.Key.StartsWith("tag"))
+                    continue;
+
+                var dict = readTagFile(new MemoryStream(item.Value));
+
+                foreach(var pair in dict)
+                {
+                    // We're not expecting any duplicate keys/tags
+                    Debug.Assert(!tags.ContainsKey(pair.Key));
+
+                    // Add the new tags into the dictionary
+                    tags[pair.Key] = pair.Value;
+                }
+            }
+            return tags;
+        }
 
         static string getNextBackupFilepath(string path)
         {
@@ -157,7 +207,17 @@ namespace GDSaveEditor
                     mergeCharacterIntoBlockList(Globals.character);
                     writeCharacterFile(characterFilepath, Globals.character);
                 }),
+
+                new ActionItem("t", "test", () => {
+                    var matches = Regex.Matches("q key ~ \"hello world\"",  @"[\""].+?[\""]|[^ ]+");
+                    var list = matches.Cast<Match>().Select(match => match.Value).ToList();
+                    foreach (var item in list)
+                    {
+                        Console.WriteLine(item);
+                    }
+                }),
             };
+
 
             Globals.activeActionMap = actionMap;
         }
@@ -466,7 +526,11 @@ namespace GDSaveEditor
 
                 // FIXME!!! Getting the target parent field type this way only deals with complex types
                 // If we ever have a dictionary in the middle of the data hiearchy somewhere, this will break!
-                var fieldType = targetParent.GetType().GetField(fieldname).FieldType;
+                Type fieldType = null;
+                if (isDictionaryWithStringKeys(targetParent))
+                    fieldType = ((Dictionary<string, object>)targetParent)[fieldname].GetType();
+                else
+                    fieldType = targetParent.GetType().GetField(fieldname).FieldType;
 
                 // Now that we know what the field type is, we can try to coerce the user input into the correct type
                 dynamic val;
@@ -479,8 +543,11 @@ namespace GDSaveEditor
                 else if (fieldType == typeof(byte))
                     val = Convert.ToByte(parameters[1]);
                 else
+                {
                     // If it's not any of the other types, just treat it as a string
                     val = parameters[1];
+                    val = val.Trim("\"".ToCharArray());
+                }
 
                 setField(targetParent, fieldname, val);
 
@@ -493,6 +560,11 @@ namespace GDSaveEditor
             return true;
         }
 
+        private static void dbResultResetPagination()
+        {
+            Globals.recordsToSkip = 0;
+        }
+
         private static bool dbHistoryBackHandler(List<string> parameters)
         {
             List<QueryHistory> list = Globals.queryHistory;
@@ -500,6 +572,7 @@ namespace GDSaveEditor
                 return true;
 
             list.RemoveAt(list.Count() - 1);
+            dbResultResetPagination();
             dbShowHistoryHandler(new List<string>());
             return true;
         }
@@ -526,7 +599,7 @@ namespace GDSaveEditor
             // Want to start over from showing record #0?
             if(parameters.Count() > 0 && parameters[0] == "restart")
             {
-                Globals.recordsToSkip = 0;
+                dbResultResetPagination();
             }
 
             if(Globals.queryHistory.Count() == 0)
@@ -544,6 +617,12 @@ namespace GDSaveEditor
             var recordsShown = 0;
             var fieldsShown = 0;
 
+            // Did we finish displaying all the records?
+            // Start over again at the first record
+            if(Globals.recordsToSkip >= recordCount)
+            {
+                dbResultResetPagination();
+            }
             int displayStart = Globals.recordsToSkip;
             int recordsToSkip = Globals.recordsToSkip;
             foreach(var item in history.collection)
@@ -727,7 +806,60 @@ namespace GDSaveEditor
             //   float
 
             if (Globals.db == null)
+            {
+                var timer = System.Diagnostics.Stopwatch.StartNew();
                 Globals.db = ArzReader.read("C:\\Program Files (x86)\\Steam\\steamapps\\common\\Grim Dawn\\database\\database.arz");
+                timer.Stop();
+                Console.WriteLine("{0:##.##} seconds to read the db", timer.ElapsedMilliseconds/1000f);
+
+                timer.Restart();
+                Globals.tags = readAllTags("C:\\Program Files (x86)\\Steam\\steamapps\\common\\Grim Dawn\\resources\\text_en.arc");
+                timer.Stop();
+                Console.WriteLine("{0:##.##} seconds to read the tag files", timer.ElapsedMilliseconds/1000f);
+
+                // We want to update all db fields where some string content starts with "tag" to the English display string
+                // which is stored in the tags table now.
+
+                // Iterate through all records
+                timer.Restart();
+                var db = Globals.db;
+                var tags = Globals.tags;
+                foreach(var recordname in db.Keys.ToList())
+                {
+                    var record = db[recordname];
+
+                    // Iterate through all fields
+                    foreach(var fieldname in record.Keys.ToList())
+                    {
+                        var fieldValue = record[fieldname];
+
+                        // If the field is a string...
+                        if (fieldValue.GetType() != typeof(string))
+                            continue;
+
+                        // And the field starts with "tag"
+                        var tagName = (string)fieldValue;
+                        if(tagName.StartsWith("tag"))
+                        {
+                            // Grab a the corresponding value in the tag table/
+                            string tagValue = null;
+                            if(Globals.tags.TryGetValue(tagName, out tagValue))
+                            {
+                                // Set the value into the correct location in the database
+                                Globals.db[recordname][fieldname] = tagValue;
+                            }
+
+                        }
+                    }
+                }
+                timer.Stop();
+                Console.WriteLine("{0:##.##} seconds to update the db tagnames", timer.ElapsedMilliseconds/1000f);
+            }
+
+            // Reconstruct, then tokenize the input 
+            string originalInput = string.Join(" ", parameters.ToArray());
+            var matches = Regex.Matches(originalInput, @"[\""].+?[\""]|[^ ]+");
+            parameters = matches.Cast<Match>().Select(match => match.Value.Trim(" \"".ToCharArray())).ToList();
 
             if (parameters.Count() == 1 && (parameters[0] == "restart" || parameters[0] == "new"))
             {
@@ -850,6 +982,7 @@ namespace GDSaveEditor
             history.queryParams = parameters;
             history.collection = result;
             Globals.queryHistory.Add(history);
+            dbResultResetPagination();
 
             // Print the results
             processCommand("qshow restart"); 
@@ -876,7 +1009,7 @@ namespace GDSaveEditor
                 return setCommandHandler(parameters);
             else if (command == "q")
                 return dbQueryHandler(parameters);
-            else if (command == "qshow")
+            else if (command == "qshow" || command == "qs")
                 return dbShowResultHandler(parameters);
             else if (command == "qpath")
                 return dbShowHistoryHandler(parameters);
@@ -1120,6 +1253,20 @@ namespace GDSaveEditor
             byte[] data = new byte[2];
             s.Read(data, 0, 2);
             return BitConverter.ToUInt16(data, 0);
+        }
+
+        internal static Int32 Read_Int32(Stream s, Encrypter encrypter)
+        {   
+            byte[] data = new byte[4];
+            s.Read(data, 0, 4);
+            return BitConverter.ToInt32(data, 0);
+        }
+
+        internal static UInt64 Read_UInt64(Stream s, Encrypter encrypter)
+        {   
+            byte[] data = new byte[8];
+            s.Read(data, 0, 8);
+            return BitConverter.ToUInt64(data, 0);
         }
 
         // Read a 4 byte value
@@ -1830,6 +1977,8 @@ namespace GDSaveEditor
                 type == typeof(bool) ||
                 type == typeof(UInt32) ||
                 type == typeof(UInt16) ||
+                type == typeof(Int32) ||
+                type == typeof(UInt64) ||
                 type == typeof(byte) ||
                 type == typeof(float))
                 return true;
@@ -1853,8 +2002,12 @@ namespace GDSaveEditor
                 return Read_Bool(s, encrypter);
             else if (type == typeof(UInt32))
                 return Read_UInt32(s, encrypter);
+            else if (type == typeof(Int32))
+                return Read_Int32(s, encrypter);
             else if (type == typeof(UInt16))
                 return Read_UInt16(s, encrypter);
+            else if (type == typeof(UInt64))
+                return Read_UInt64(s, encrypter);
             else if (type == typeof(byte))
                 return Read_Byte(s, encrypter);
             else if (type == typeof(float))

@@ -42,14 +42,11 @@ namespace GDSaveEditor
                 var stringTable = readStringTable(fs, header.stringTableStart, header.stringTableStart + header.stringTableSize);
                 var recordsTable = readRecordHeadersTable(fs, header.recordTableStart, (int)header.recordTableEntries, stringTable);
 
-                var timer = System.Diagnostics.Stopwatch.StartNew();
                 foreach(var recordHeader in recordsTable)
                 {
                     var record = readRecord(fs, recordHeader, stringTable);
                     db[recordHeader.filename] = record;
                 }
-                timer.Stop();
-                Console.WriteLine("{0:##.##} seconds to read the db", timer.ElapsedMilliseconds/1000f);
 
                 return db;
             }
