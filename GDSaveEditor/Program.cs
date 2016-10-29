@@ -560,6 +560,11 @@ namespace GDSaveEditor
             return true;
         }
 
+        private static void dbResultResetPagination()
+        {
+            Globals.recordsToSkip = 0;
+        }
+
         private static bool dbHistoryBackHandler(List<string> parameters)
         {
             List<QueryHistory> list = Globals.queryHistory;
@@ -567,6 +572,7 @@ namespace GDSaveEditor
                 return true;
 
             list.RemoveAt(list.Count() - 1);
+            dbResultResetPagination();
             dbShowHistoryHandler(new List<string>());
             return true;
         }
@@ -593,7 +599,7 @@ namespace GDSaveEditor
             // Want to start over from showing record #0?
             if(parameters.Count() > 0 && parameters[0] == "restart")
             {
-                Globals.recordsToSkip = 0;
+                dbResultResetPagination();
             }
 
             if(Globals.queryHistory.Count() == 0)
@@ -611,6 +617,12 @@ namespace GDSaveEditor
             var recordsShown = 0;
             var fieldsShown = 0;
 
+            // Did we finish displaying all the records?
+            // Start over again at the first record
+            if(Globals.recordsToSkip >= recordCount)
+            {
+                dbResultResetPagination();
+            }
             int displayStart = Globals.recordsToSkip;
             int recordsToSkip = Globals.recordsToSkip;
             foreach(var item in history.collection)
@@ -970,6 +982,7 @@ namespace GDSaveEditor
             history.queryParams = parameters;
             history.collection = result;
             Globals.queryHistory.Add(history);
+            dbResultResetPagination();
 
             // Print the results
             processCommand("qshow restart"); 
@@ -996,7 +1009,7 @@ namespace GDSaveEditor
                 return setCommandHandler(parameters);
             else if (command == "q")
                 return dbQueryHandler(parameters);
-            else if (command == "qshow")
+            else if (command == "qshow" || command == "qs")
                 return dbShowResultHandler(parameters);
             else if (command == "qpath")
                 return dbShowHistoryHandler(parameters);
